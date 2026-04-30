@@ -1,11 +1,8 @@
-"""Export a districting plan as a self-contained PDF.
+"""Self-contained PDF export with embedded plan provenance.
 
-The PDF carries two layers of provenance:
-  1. Visible cover page with run parameters.
-  2. Machine-readable JSON in the PDF Info dictionary's /Keywords field
-     containing the full plan: weights, seeds, growth rule, random seed, AND a
-     gzip+base64-encoded block→district assignment array. The viewer can rebuild
-     the plan from the PDF alone.
+Cover page lists run parameters; map and per-district scorecard follow. The full plan
+(including a gzip+base64 GEOID→district mapping) is embedded in the PDF's /Keywords field
+so the viewer can reconstruct the map from the PDF alone.
 """
 from __future__ import annotations
 
@@ -18,7 +15,6 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak,
 )
@@ -28,7 +24,7 @@ from .engine import PlanResult
 from .render import render_plan_map
 
 
-PROVENANCE_KEY = "RedistrictPlanV1"
+PROVENANCE_KEY = "RedistrictPlanV2"
 
 
 def _provenance_payload(plan: PlanResult) -> dict:
@@ -36,27 +32,30 @@ def _provenance_payload(plan: PlanResult) -> dict:
         "schema": PROVENANCE_KEY,
         "plan_id": plan.plan_id,
         "usps": plan.usps,
+        "unit": plan.unit,
         "n_districts": plan.n_districts,
         "seed_strategy": plan.seed_strategy,
-        "growth_rule": plan.growth_rule,
+        "epsilon": plan.epsilon,
+        "chain_length": plan.chain_length,
         "weights": plan.weights,
         "random_seed": plan.random_seed,
         "elapsed_sec": plan.elapsed_sec,
+        "accepted_steps": plan.accepted_steps,
         "scorecard": plan.scorecard,
         "assignment_b64gz": persistence.encode_assignment(plan.assignment),
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def export_pdf(plan: PlanResult, blocks, out_path: Path | None = None) -> Path:
-    """Write a multi-page PDF for `plan` to data/exports/. Returns the path."""
+def export_pdf(plan: PlanResult, units_gdf, out_path: Path | None = None) -> Path:
     out_path = out_path or (
-        config.EXPORTS_DIR / f"{plan.usps}_{plan.n_districts}d_{plan.plan_id[:8]}.pdf"
+        config.EXPORTS_DIR
+        / f"{plan.usps}_{plan.unit}_{plan.n_districts}d_{plan.plan_id[:8]}.pdf"
     )
 
     map_png = render_plan_map(
-        blocks, plan.assignment,
-        title=f"{plan.usps} — {plan.n_districts} districts",
+        units_gdf, plan.assignment,
+        title=f"{plan.usps} — {plan.n_districts} districts ({plan.unit} resolution)",
     )
 
     styles = getSampleStyleSheet()
@@ -76,27 +75,32 @@ def export_pdf(plan: PlanResult, blocks, out_path: Path | None = None) -> Path:
         keywords=f"{PROVENANCE_KEY}={payload_json}",
     )
     story = []
-
-    # ---- cover ----
     sc = plan.scorecard
+
     story.append(Paragraph(f"{plan.usps} Districting Plan", h1))
     story.append(Paragraph(
         f"<b>Plan ID:</b> {plan.plan_id}<br/>"
         f"<b>Generated:</b> {datetime.now(timezone.utc).isoformat(timespec='seconds')}<br/>"
+        f"<b>Unit of analysis:</b> {plan.unit}<br/>"
         f"<b>State seats:</b> {plan.n_districts}<br/>"
         f"<b>Total population:</b> {sc['total_population']:,}<br/>"
-        f"<b>Target per district:</b> {sc['target_population']:,.1f}<br/>"
-        f"<b>Max |deviation|:</b> {sc['max_abs_deviation_pct']:.3f}%<br/>"
+        f"<b>Target / district:</b> {sc['target_population']:,.1f}<br/>"
+        f"<b>Max |deviation|:</b> {sc['max_abs_deviation_pct']:.4f}%<br/>"
+        f"<b>Polsby–Popper (mean / min):</b> {sc['polsby_popper_mean']:.4f} / "
+        f"{sc['polsby_popper_min']:.4f}<br/>"
         f"<b>County splits:</b> {sc['county_splits']}<br/>"
+        f"<b>Cut edges:</b> {sc['cut_edges']:,}<br/>"
         f"<b>Contiguous:</b> {'yes' if sc['contiguous'] else 'NO'}<br/>"
-        f"<b>Score (lower better):</b> {sc['score']:.4f}<br/>",
+        f"<b>Composite score (lower better):</b> {sc['score']:.4f}<br/>",
         body,
     ))
     story.append(Spacer(1, 0.15 * inch))
     story.append(Paragraph("Algorithm", h2))
     story.append(Paragraph(
+        f"<b>Engine:</b> gerrychain ReCom MCMC<br/>"
         f"<b>Seed strategy:</b> {plan.seed_strategy}<br/>"
-        f"<b>Growth rule:</b> {plan.growth_rule}<br/>"
+        f"<b>ε (population tolerance):</b> {plan.epsilon}<br/>"
+        f"<b>Chain length:</b> {plan.chain_length} ({plan.accepted_steps} accepted)<br/>"
         f"<b>Random seed:</b> {plan.random_seed}<br/>"
         f"<b>Elapsed:</b> {plan.elapsed_sec:.2f} sec<br/>",
         body,
@@ -114,22 +118,23 @@ def export_pdf(plan: PlanResult, blocks, out_path: Path | None = None) -> Path:
     ]))
     story.append(t)
 
-    # ---- map page ----
     story.append(PageBreak())
     story.append(Paragraph(f"{plan.usps} — District Map", h1))
-    img = Image(BytesIO(map_png), width=7.0 * inch, height=7.0 * inch, kind="proportional")
-    story.append(img)
+    story.append(Image(BytesIO(map_png), width=7.0 * inch, height=7.0 * inch,
+                       kind="proportional"))
 
-    # ---- per-district scorecard ----
     story.append(PageBreak())
     story.append(Paragraph("Per-District Metrics", h1))
-    rows = [["#", "Population", "Deviation %", "Area (sq mi)", "Blocks"]]
+    rows = [["#", "Population", "Deviation %", "Area (sq mi)",
+             "Perimeter (mi)", "PP", "Units"]]
     for d in sc["per_district"]:
         rows.append([
             str(d["district"]),
             f"{d['population']:,}",
-            f"{d['deviation_pct']:+.3f}",
+            f"{d['deviation_pct']:+.4f}",
             f"{d['area_sqmi']:,.1f}",
+            f"{d['perimeter_mi']:,.1f}",
+            f"{d['polsby_popper']:.3f}",
             f"{d['block_count']:,}",
         ])
     t = Table(rows, hAlign="LEFT")
@@ -143,7 +148,7 @@ def export_pdf(plan: PlanResult, blocks, out_path: Path | None = None) -> Path:
 
     story.append(Spacer(1, 0.3 * inch))
     story.append(Paragraph(
-        "<i>This PDF embeds the full plan (block→district assignment) in its metadata; "
+        "<i>This PDF embeds the full plan (GEOID → district mapping) in its metadata; "
         "the viewer can reconstruct the map directly from this file.</i>",
         body,
     ))
@@ -160,14 +165,10 @@ def _json_default(o):
     raise TypeError(f"Not serializable: {type(o)}")
 
 
-# ---- read-back ----------------------------------------------------------------
-
 def read_provenance(pdf_path: Path) -> dict:
-    """Extract the embedded plan payload from a PDF written by export_pdf()."""
     from pypdf import PdfReader
     reader = PdfReader(str(pdf_path))
     keywords = reader.metadata.get("/Keywords") if reader.metadata else None
     if not keywords or not keywords.startswith(f"{PROVENANCE_KEY}="):
-        raise ValueError("PDF has no embedded redistrict provenance")
-    payload = json.loads(keywords[len(PROVENANCE_KEY) + 1:])
-    return payload
+        raise ValueError(f"PDF has no embedded {PROVENANCE_KEY} provenance")
+    return json.loads(keywords[len(PROVENANCE_KEY) + 1:])

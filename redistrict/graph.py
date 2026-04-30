@@ -1,19 +1,21 @@
-"""Build and cache the block adjacency graph.
+"""Build and cache the dual graph used by the redistricting engine.
 
-Two blocks are neighbors if their geometries share more than a point (Queen contiguity
-filtered to Rook would skip corner-only neighbors; we use Queen for robustness then drop
-zero-length intersections to approximate Rook).
+We use ``gerrychain.Graph`` directly. It is a NetworkX graph with these node attributes:
+  - GEOID            block id
+  - population       2020 P1_001N
+  - area             sq mi (computed in equal-area projection)
+  - perimeter        miles (block boundary length)
+  - centroid_x, centroid_y     equal-area meters
+  - county           5-char state+county FIPS
 
-Output is a pickled dict for fast reload:
-    {
-        'usps': str,
-        'geoids': list[str],            # node ordering
-        'population': np.ndarray[int],
-        'centroid_xy': np.ndarray[float, (n, 2)],   # x=lon, y=lat
-        'area_sqmi': np.ndarray[float],
-        'county': np.ndarray['<U5'],    # county FIPS (state+county)
-        'adjacency': list[list[int]],   # adjacency list of node indices
-    }
+Edge attributes (added by gerrychain.from_geodataframe):
+  - shared_perim     length of shared boundary in miles (used for Polsby-Popper)
+
+Two units of analysis are supported via the ``unit`` argument:
+  - "block"         ~175k nodes for Iowa (slowest, highest fidelity)
+  - "blockgroup"    ~2.7k nodes for Iowa (fast, academic-standard for ReCom MCMC)
+
+Output is pickled for fast reload.
 """
 from __future__ import annotations
 
@@ -22,74 +24,86 @@ from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
-from shapely.strtree import STRtree
+import pandas as pd
+from gerrychain import Graph
 
 from . import config, loader
 
-# Equal-area projection for area calculations (US National Atlas, EPSG:9311 / former 2163).
 EQUAL_AREA_CRS = "EPSG:9311"
 SQM_PER_SQMI = 2_589_988.110336
+M_PER_MI = 1609.344
 
 
-def _build_adjacency(gdf: gpd.GeoDataFrame) -> list[list[int]]:
-    """Queen-style adjacency via STRtree, dropping point-only touches."""
-    geoms = list(gdf.geometry.values)
-    tree = STRtree(geoms)
-    n = len(geoms)
-    adj: list[set[int]] = [set() for _ in range(n)]
-    for i, g in enumerate(geoms):
-        # Query candidates whose envelope intersects this geometry's envelope.
-        candidates = tree.query(g)
-        for j in candidates:
-            j = int(j)
-            if j <= i:
-                continue
-            other = geoms[j]
-            if not g.intersects(other):
-                continue
-            inter = g.intersection(other)
-            # Skip pure-point touches (corner contact).
-            if inter.is_empty:
-                continue
-            if inter.geom_type in ("Point", "MultiPoint"):
-                continue
-            adj[i].add(j)
-            adj[j].add(i)
-    return [sorted(s) for s in adj]
+def _aggregate_to_blockgroups(blocks: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Roll up blocks to block groups (first 12 chars of GEOID)."""
+    blocks = blocks.copy()
+    blocks["BG_GEOID"] = blocks["GEOID"].astype(str).str[:12]
+    bg = blocks.dissolve(by="BG_GEOID", as_index=False, aggfunc={"population": "sum"})
+    bg = bg.rename(columns={"BG_GEOID": "GEOID"})
+    return bg
 
 
-def build_graph(usps: str, *, force: bool = False) -> dict:
-    """Build node + adjacency cache for a state. Returns dict (also persisted)."""
-    cache = config.graph_cache(usps)
+def build_graph(usps: str, *, unit: str = "blockgroup", force: bool = False) -> Graph:
+    """Build (or load) the dual graph for ``usps`` at the chosen ``unit`` resolution."""
+    if unit not in ("block", "blockgroup"):
+        raise ValueError("unit must be 'block' or 'blockgroup'")
+
+    cache = config.CACHE_DIR / f"{usps.lower()}_{unit}_graph.pkl"
     if cache.exists() and not force:
         with open(cache, "rb") as f:
             return pickle.load(f)
 
-    gdf = loader.load_blocks(usps)
-    print(f"[{usps}] building adjacency for {len(gdf):,} blocks…")
+    blocks = loader.load_blocks(usps)
+    if unit == "blockgroup":
+        gdf = _aggregate_to_blockgroups(blocks)
+    else:
+        gdf = blocks.copy()
 
-    # Reproject for area + centroids in equal-area meters.
+    # Reproject to equal-area for perimeter, area, centroid in consistent units.
     eq = gdf.to_crs(EQUAL_AREA_CRS)
+    gdf = gdf.copy()
+    gdf["area"] = (eq.geometry.area / SQM_PER_SQMI).to_numpy()
+    gdf["perimeter"] = (eq.geometry.length / M_PER_MI).to_numpy()
     centroids = eq.geometry.centroid
-    area_sqmi = (eq.geometry.area / SQM_PER_SQMI).to_numpy()
+    gdf["centroid_x"] = centroids.x.to_numpy()
+    gdf["centroid_y"] = centroids.y.to_numpy()
+    gdf["county"] = gdf["GEOID"].astype(str).str[:5]
 
-    # Adjacency uses NAD83 (degrees) — fine, it's just topology.
-    adj = _build_adjacency(gdf)
+    # gerrychain's from_geodataframe builds rook adjacency and adds 'shared_perim'.
+    print(f"[{usps}/{unit}] building dual graph for {len(gdf):,} units…")
+    g = Graph.from_geodataframe(
+        gdf, adjacency="rook", reproject=False,
+        cols_to_add=["GEOID", "population", "area", "perimeter",
+                     "centroid_x", "centroid_y", "county"],
+        ignore_errors=True,
+    )
 
-    # County code = first 5 chars of GEOID (state FIPS + county FIPS).
-    county = gdf["GEOID"].astype(str).str[:5].to_numpy()
+    # gerrychain stores 'shared_perim' in degrees (since we kept NAD83). Recompute in miles
+    # using the equal-area geometries we already have.
+    geoid_to_eq = dict(zip(gdf["GEOID"].astype(str), eq.geometry))
+    fixed = 0
+    for u, v in g.edges:
+        gu = geoid_to_eq.get(g.nodes[u]["GEOID"])
+        gv = geoid_to_eq.get(g.nodes[v]["GEOID"])
+        if gu is None or gv is None:
+            continue
+        try:
+            sp = gu.intersection(gv).length / M_PER_MI
+        except Exception:
+            sp = 0.0
+        g.edges[u, v]["shared_perim"] = sp
+        fixed += 1
 
-    data = {
-        "usps": usps.upper(),
-        "geoids": gdf["GEOID"].astype(str).tolist(),
-        "population": gdf["population"].astype(np.int64).to_numpy(),
-        "centroid_xy": np.column_stack([centroids.x.to_numpy(), centroids.y.to_numpy()]),
-        "area_sqmi": area_sqmi,
-        "county": county,
-        "adjacency": adj,
-    }
+    g.graph["usps"] = usps.upper()
+    g.graph["unit"] = unit
+    g.graph["total_population"] = int(gdf["population"].sum())
 
     with open(cache, "wb") as f:
-        pickle.dump(data, f)
-    print(f"[{usps}] graph cached → {cache}")
-    return data
+        pickle.dump(g, f)
+    print(f"[{usps}/{unit}] cached → {cache}  ({g.number_of_nodes():,} nodes, "
+          f"{g.number_of_edges():,} edges)")
+    return g
+
+
+def graph_population(g: Graph) -> int:
+    return g.graph["total_population"]

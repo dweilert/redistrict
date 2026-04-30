@@ -1,15 +1,13 @@
-"""Render district choropleth maps (matplotlib)."""
+"""Render district choropleth maps from a Plan + the underlying GeoDataFrame."""
 from __future__ import annotations
 
 from io import BytesIO
-from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 
 
-# Distinct color palette (Tableau-ish), cycled for >10 districts.
 PALETTE = [
     "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F",
     "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F", "#BAB0AC",
@@ -18,19 +16,33 @@ PALETTE = [
 ] * 4
 
 
-def render_plan_map(blocks: gpd.GeoDataFrame, assignment: np.ndarray,
+def render_plan_map(units_gdf: gpd.GeoDataFrame, assignment: dict,
                     title: str | None = None,
-                    figsize: tuple[float, float] = (8.5, 8.5)) -> bytes:
-    """Render the plan as a PNG (returns bytes). Dissolves blocks by district for speed."""
-    gdf = blocks.copy()
-    gdf["district"] = assignment
-    # Dissolve heavy step but produces sharp district boundaries.
-    diss = gdf.dissolve(by="district", as_index=False, aggfunc={"population": "sum"})
+                    figsize: tuple[float, float] = (8.5, 8.5),
+                    show_county: bool = True,
+                    counties_gdf: gpd.GeoDataFrame | None = None) -> bytes:
+    """Render the plan as a PNG.
+
+    Args:
+        units_gdf: GeoDataFrame with a GEOID column matching keys in `assignment`.
+        assignment: mapping of GEOID → district id.
+        counties_gdf: optional county outline overlay (thin gray line).
+    """
+    gdf = units_gdf.copy()
+    gdf["GEOID"] = gdf["GEOID"].astype(str)
+    gdf["district"] = gdf["GEOID"].map(assignment)
+    gdf = gdf.dropna(subset=["district"])
+    gdf["district"] = gdf["district"].astype(int)
+    diss = gdf.dissolve(by="district", as_index=False)
+
     fig, ax = plt.subplots(figsize=figsize, dpi=150)
-    n_d = int(assignment.max()) + 1
+    n_d = int(diss["district"].max()) + 1
     colors = [PALETTE[i % len(PALETTE)] for i in range(n_d)]
-    diss.plot(ax=ax, color=[colors[int(d)] for d in diss["district"]],
-              edgecolor="white", linewidth=0.6)
+    diss.plot(ax=ax,
+              color=[colors[int(d)] for d in diss["district"]],
+              edgecolor="white", linewidth=1.0)
+    if show_county and counties_gdf is not None:
+        counties_gdf.plot(ax=ax, facecolor="none", edgecolor="#555", linewidth=0.4)
     ax.set_axis_off()
     if title:
         ax.set_title(title, fontsize=11)

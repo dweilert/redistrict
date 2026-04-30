@@ -19,7 +19,9 @@ dependencies:
   - reportlab
   - pillow
   - pypdf
+  - pytest
   - pip
   - pip:
       - streamlit-folium
       - folium
+      - gerrychain

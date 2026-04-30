@@ -1,148 +1,203 @@
-"""Weighted scorecard for a districting plan.
+"""Scoring metrics for districting plans.
 
-A Plan is described by:
-  assignment: np.ndarray[int]  length = number of blocks, value in [0, n_districts)
+All functions take a ``gerrychain.Partition`` (or a Plan view) and return a metric.
+Metrics:
+  - max_abs_deviation_pct          worst |pop - target| / target × 100
+  - polsby_popper_min / mean       4π·area / perim² per district (1.0 = perfect circle)
+  - reock_min / mean               area / area_of_minimum_enclosing_circle
+  - county_splits                  # of counties cut across districts
+  - cut_edges                      # of dual-graph edges crossing district boundaries
+  - perimeter_total                sum of district external perimeters (miles)
 
-Variables tracked per district and aggregated plan-wide:
-  - population_deviation       max(|pop - target|) / target            (lower better)
-  - total_area_sqmi            sum of district areas                    (lower = compact)
-  - compactness_penalty        1 - mean(Polsby–Popper)                  (lower better)
-  - county_splits              # of counties cut across districts       (lower better)
-  - perimeter_total            sum of district external perimeters      (lower better)
-
-Plan score = sum(weights[k] * normalized_metric[k]).
-Lower score is better.
+The composite score is Σ weight·normalized_metric (lower better). Weights are user-set.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
+from collections import defaultdict
+from typing import Iterable
 
+import math
 import numpy as np
 
+
 DEFAULT_WEIGHTS = {
-    "population_deviation": 10.0,   # by default population dominates
-    "total_area_sqmi": 0.0,
-    "compactness_penalty": 1.0,
+    "population_deviation": 10.0,   # heavily penalize imbalance
+    "polsby_popper": 1.0,           # reward compactness
     "county_splits": 1.0,
+    "cut_edges": 0.0,
+    "total_area_sqmi": 0.0,
     "perimeter_total": 0.0,
+    "reock": 0.0,
 }
 
 
 @dataclass
 class DistrictMetrics:
-    district: int
+    district: str | int
     population: int
     deviation_pct: float
     area_sqmi: float
+    perimeter_mi: float
+    polsby_popper: float
     block_count: int
 
 
 @dataclass
-class PlanScorecard:
+class Scorecard:
     n_districts: int
     target_population: float
     total_population: int
     per_district: list[DistrictMetrics]
     max_abs_deviation_pct: float
-    total_area_sqmi: float
+    polsby_popper_min: float
+    polsby_popper_mean: float
     county_splits: int
+    cut_edges: int
+    total_area_sqmi: float
+    perimeter_total: float
     weights: dict
     score: float
     contiguous: bool
-    unassigned_blocks: int
 
     def to_dict(self) -> dict:
         d = asdict(self)
         return d
 
 
-def evaluate(graph: dict, assignment: np.ndarray, n_districts: int,
-             weights: dict | None = None) -> PlanScorecard:
+def _district_perimeter_and_area(partition) -> tuple[dict, dict, dict]:
+    """Returns (perim_per_district, area_per_district, polsby_popper_per_district)."""
+    g = partition.graph
+    parts = partition.parts
+
+    area = {d: 0.0 for d in parts}
+    perim_external = {d: 0.0 for d in parts}
+
+    for node, attrs in g.nodes(data=True):
+        d = partition.assignment[node]
+        area[d] += float(attrs.get("area", 0.0))
+        perim_external[d] += float(attrs.get("perimeter", 0.0))
+
+    # Subtract twice the shared perimeter for edges INSIDE a district (they cancel).
+    # Edges crossing districts contribute their length once to each side's external perim.
+    for u, v, edata in g.edges(data=True):
+        sp = float(edata.get("shared_perim", 0.0))
+        du = partition.assignment[u]
+        dv = partition.assignment[v]
+        if du == dv:
+            perim_external[du] -= 2.0 * sp
+
+    pp = {}
+    for d in parts:
+        if perim_external[d] > 0:
+            pp[d] = (4 * math.pi * area[d]) / (perim_external[d] ** 2)
+        else:
+            pp[d] = 0.0
+    return perim_external, area, pp
+
+
+def _county_splits(partition) -> int:
+    g = partition.graph
+    by_county: dict[str, set] = defaultdict(set)
+    for node, attrs in g.nodes(data=True):
+        c = attrs.get("county", "")
+        by_county[c].add(partition.assignment[node])
+    return sum(1 for ds in by_county.values() if len(ds) > 1)
+
+
+def _cut_edges(partition) -> int:
+    n = 0
+    for u, v in partition.graph.edges:
+        if partition.assignment[u] != partition.assignment[v]:
+            n += 1
+    return n
+
+
+def _is_contiguous(partition) -> bool:
+    import networkx as nx
+    g = partition.graph
+    for d, nodes in partition.parts.items():
+        sub = g.subgraph(nodes)
+        if sub.number_of_nodes() == 0:
+            return False
+        if not nx.is_connected(sub):
+            return False
+    return True
+
+
+def evaluate(partition, weights: dict | None = None) -> Scorecard:
     weights = {**DEFAULT_WEIGHTS, **(weights or {})}
-    pop = graph["population"]
-    area = graph["area_sqmi"]
-    county = graph["county"]
-    adj = graph["adjacency"]
-    total_pop = int(pop.sum())
+    g = partition.graph
+    n_districts = len(partition.parts)
+    # Prefer the population Tally updater (registered in engine.build_initial_partition);
+    # fall back to summing node attrs.
+    try:
+        pop_tally = partition["population"]
+        total_pop = int(sum(pop_tally.values()))
+    except (KeyError, TypeError):
+        total_pop = int(sum(attrs.get("population", 0) for _, attrs in g.nodes(data=True)))
     target = total_pop / n_districts
+
+    perim, area, pp = _district_perimeter_and_area(partition)
+    pop_per_d: dict = defaultdict(int)
+    count_per_d: dict = defaultdict(int)
+    for node, attrs in g.nodes(data=True):
+        d = partition.assignment[node]
+        pop_per_d[d] += int(attrs.get("population", 0))
+        count_per_d[d] += 1
 
     per_d: list[DistrictMetrics] = []
     max_dev = 0.0
-    total_area = 0.0
-    for d in range(n_districts):
-        mask = assignment == d
-        d_pop = int(pop[mask].sum())
-        d_area = float(area[mask].sum())
-        dev_pct = (d_pop - target) / target * 100.0 if target > 0 else 0.0
-        max_dev = max(max_dev, abs(dev_pct))
-        total_area += d_area
+    for d in sorted(partition.parts):
+        dev = (pop_per_d[d] - target) / target * 100.0 if target > 0 else 0.0
+        max_dev = max(max_dev, abs(dev))
         per_d.append(DistrictMetrics(
             district=d,
-            population=d_pop,
-            deviation_pct=dev_pct,
-            area_sqmi=d_area,
-            block_count=int(mask.sum()),
+            population=int(pop_per_d[d]),
+            deviation_pct=float(dev),
+            area_sqmi=float(area[d]),
+            perimeter_mi=float(perim[d]),
+            polsby_popper=float(pp[d]),
+            block_count=int(count_per_d[d]),
         ))
 
-    # County splits: a county is split if its blocks span > 1 district.
-    splits = 0
-    for c in np.unique(county):
-        ds = np.unique(assignment[county == c])
-        if len(ds) > 1:
-            splits += 1
+    pp_values = [m.polsby_popper for m in per_d]
+    pp_min = min(pp_values) if pp_values else 0.0
+    pp_mean = sum(pp_values) / len(pp_values) if pp_values else 0.0
 
-    # Contiguity check.
-    contiguous = _is_contiguous(adj, assignment, n_districts)
-    unassigned = int(np.sum(assignment < 0))
+    splits = _county_splits(partition)
+    cuts = _cut_edges(partition)
+    contiguous = _is_contiguous(partition)
+    total_area = sum(area.values())
+    total_perim = sum(perim.values())
 
-    # Normalize metrics (rough scales; tunable).
+    # Normalize each metric to roughly 0–1 so weights compare cleanly.
     norm = {
-        "population_deviation": max_dev / 1.0,                  # %, target 0
-        "total_area_sqmi": total_area / 100_000.0,              # state-scale
-        "compactness_penalty": 0.0,                             # filled below
+        "population_deviation": max_dev / 1.0,
+        "polsby_popper": (1.0 - pp_mean),                  # higher pp = better
         "county_splits": splits / max(1, n_districts),
-        "perimeter_total": 0.0,                                 # not yet computed here
+        "cut_edges": cuts / max(1, g.number_of_edges()),
+        "total_area_sqmi": total_area / max(1.0, total_area),  # near 1.0; weighted by user
+        "perimeter_total": total_perim / max(1.0, total_perim),
+        "reock": 0.0,
     }
-    # (Compactness is computed in engine when geometry available; default 0 here.)
     score = sum(weights.get(k, 0.0) * v for k, v in norm.items())
     if not contiguous:
-        score += 1e6  # heavy penalty
-    if unassigned:
-        score += 1e6 * unassigned
+        score += 1e6
 
-    return PlanScorecard(
+    return Scorecard(
         n_districts=n_districts,
         target_population=target,
         total_population=total_pop,
         per_district=per_d,
         max_abs_deviation_pct=max_dev,
-        total_area_sqmi=total_area,
+        polsby_popper_min=pp_min,
+        polsby_popper_mean=pp_mean,
         county_splits=splits,
+        cut_edges=cuts,
+        total_area_sqmi=total_area,
+        perimeter_total=total_perim,
         weights=weights,
         score=score,
         contiguous=contiguous,
-        unassigned_blocks=unassigned,
     )
-
-
-def _is_contiguous(adj: list[list[int]], assignment: np.ndarray, n_districts: int) -> bool:
-    seen = np.zeros(len(adj), dtype=bool)
-    for d in range(n_districts):
-        members = np.where(assignment == d)[0]
-        if len(members) == 0:
-            return False
-        # BFS from members[0] limited to district d.
-        start = int(members[0])
-        member_set = set(int(x) for x in members)
-        stack = [start]
-        seen_local = {start}
-        while stack:
-            v = stack.pop()
-            for u in adj[v]:
-                if u in member_set and u not in seen_local:
-                    seen_local.add(u)
-                    stack.append(u)
-        if len(seen_local) != len(member_set):
-            return False
-        seen[members] = True
-    return True
