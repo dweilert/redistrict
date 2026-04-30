@@ -156,6 +156,56 @@ export const api = {
   }) => post<BatchManifest>('/api/batches', req),
   startBatch: (id: string, workers: number) =>
     post<{ started: boolean }>(`/api/batches/${id}/start`, { workers }),
+  // ---- single-state plan ----
+  createSinglePlan: (req: {
+    usps: string;
+    unit: string;
+    epsilon: number;
+    chain_length: number;
+    seed_strategy?: string;
+    weights?: Record<string, number>;
+    random_seed?: number | null;
+  }) => post<{ plan_id: string }>('/api/single-plan', req),
+  singlePlanStatus: (id: string) =>
+    get<{
+      plan_id: string;
+      phase: string;
+      usps: string;
+      n_districts: number;
+      step: number;
+      best_score: number | null;
+      best_max_dev_pct: number | null;
+      best_polsby_popper_mean: number | null;
+      error?: string;
+    }>(`/api/single-plan/${id}/status`),
+  singlePlanResult: (id: string) =>
+    get<{
+      plan_id: string;
+      usps: string;
+      n_districts: number;
+      scorecard: {
+        target_population: number;
+        total_population: number;
+        max_abs_deviation_pct: number;
+        polsby_popper_mean: number;
+        polsby_popper_min: number;
+        county_splits: number;
+        cut_edges: number;
+        per_district: Array<{
+          district: number;
+          population: number;
+          deviation_pct: number;
+          area_sqmi: number;
+          perimeter_mi: number;
+          polsby_popper: number;
+          block_count: number;
+        }>;
+      };
+    }>(`/api/single-plan/${id}/result`),
+  singlePlanDistricts: (id: string) =>
+    get<GeoJSON.FeatureCollection>(`/api/single-plan/${id}/districts.geojson`),
+  singlePlanPDFUrl: (id: string) => `/api/single-plan/${id}/pdf`,
+
   retryFailed: (id: string, workers = 4) =>
     post<{ started: boolean; states?: string[] }>(`/api/batches/${id}/retry`, { workers }),
 };

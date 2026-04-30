@@ -37,9 +37,10 @@ interface Props {
   statuses: StateStatus[];
   showDistricts: boolean;
   onStateClick?: (usps: string) => void;
+  highlightUsps?: string | null;
 }
 
-export function USMap({ batchId, statuses, showDistricts, onStateClick }: Props) {
+export function USMap({ batchId, statuses, showDistricts, onStateClick, highlightUsps }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [{ width, height }, setSize] = useState({ width: 1100, height: 660 });
   // Zoom + pan state (transform on an inner <g>).
@@ -226,16 +227,16 @@ export function USMap({ batchId, statuses, showDistricts, onStateClick }: Props)
                   <path
                     d={stateOutlinePath}
                     fill="none"
-                    stroke="#1e293b"
-                    strokeWidth={0.7}
+                    stroke={highlightUsps === usps ? '#2563eb' : '#1e293b'}
+                    strokeWidth={highlightUsps === usps ? 3 : 0.7}
                   />
                 </>
               ) : (
                 <path
                   d={stateOutlinePath}
                   fill={PHASE_COLORS[phase] ?? '#fff'}
-                  stroke="#1e293b"
-                  strokeWidth={0.6}
+                  stroke={highlightUsps === usps ? '#2563eb' : '#1e293b'}
+                  strokeWidth={highlightUsps === usps ? 3 : 0.6}
                 />
               )}
 

@@ -32,10 +32,12 @@ interface Props {
   batchId: string;
   usps: string;
   status?: StateStatus;
+  manifest?: { unit: string; epsilon: number; chain_length: number };
+  onTune?: (usps: string) => void;
   onClose: () => void;
 }
 
-export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
+export function StateDetailModal({ batchId, usps, status, manifest, onTune, onClose }: Props) {
   const [showLabels, setShowLabels] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState<number | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(0); // 0–100, 0 = no overlay
@@ -88,7 +90,17 @@ export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
               </span>
             )}
           </h2>
-          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {onTune && (
+              <button
+                onClick={() => onTune(usps)}
+                title="Open the single-state generator pre-filled with this state's settings"
+              >
+                ⚙ Tune this state
+              </button>
+            )}
+            <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
         </div>
 
         <div className="modal-state-body">
@@ -458,22 +470,33 @@ function StateDistrictMap({
         />
       ))}
       {/* Official-current overlay (119th Congress districts) — drawn ABOVE
-          our generated polygons but BELOW the labels. Uses no fill (just dashed
-          outline) so the underlying district colors stay legible while the
-          opacity slider controls the prominence of the comparison. */}
+          our generated polygons but BELOW the labels. Each official district
+          gets a pale color fill from the palette plus a dashed black outline,
+          so the user sees the *boundaries* of the official plan AND its
+          coverage at a glance. Slider controls overall prominence. */}
       {overlayOpacity > 0 && officialFC && officialFC.features.map((f, i) => {
         const d = pathGen(f) ?? '';
+        const od = (f.properties as { district?: number } | null)?.district ?? i;
+        const fillColor = DISTRICT_PALETTE[(od - 1 + 1000) % DISTRICT_PALETTE.length];
         return (
-          <path
-            key={`official-${i}`}
-            d={d}
-            fill="none"
-            stroke="#0f172a"
-            strokeWidth={2.5}
-            strokeDasharray="6 4"
-            opacity={overlayOpacity}
-            pointerEvents="none"
-          />
+          <g key={`official-${i}`}>
+            <path
+              d={d}
+              fill={fillColor}
+              fillOpacity={0.45 * overlayOpacity}
+              stroke="none"
+              pointerEvents="none"
+            />
+            <path
+              d={d}
+              fill="none"
+              stroke="#0f172a"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              opacity={overlayOpacity}
+              pointerEvents="none"
+            />
+          </g>
         );
       })}
       {/* Numbered chips */}

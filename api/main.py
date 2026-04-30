@@ -271,6 +271,187 @@ def start_batch(batch_id: str, req: WorkerControl):
     return {"started": True, "batch_id": batch_id, "workers": req.workers}
 
 
+# ---- single-plan endpoints --------------------------------------------------
+
+# In-memory registry of single-plan jobs. Localhost-only single-process server.
+_SINGLE_PLANS: dict[str, dict] = {}
+
+
+class SinglePlanRequest(BaseModel):
+    usps: str
+    unit: str = "blockgroup"
+    epsilon: float = 0.01
+    chain_length: int = 500
+    seed_strategy: str = "tree"
+    weights: dict[str, float] | None = None
+    random_seed: int | None = None
+
+
+@app.post("/api/single-plan")
+def create_single_plan(req: SinglePlanRequest):
+    """Kick off generation of a single-state plan in a background thread.
+    Returns a plan_id immediately so the client can poll for progress."""
+    import threading
+    import uuid as _uuid
+    from redistrict import config as _cfg, engine, graph as graph_mod
+
+    if req.usps not in _cfg.STATES:
+        raise HTTPException(400, f"Unknown state: {req.usps}")
+    seats = _cfg.STATES[req.usps]["seats"]
+    if seats < 2:
+        raise HTTPException(400, f"{req.usps} has {seats} House seat(s); no districting needed")
+
+    plan_id = _uuid.uuid4().hex[:12]
+    _SINGLE_PLANS[plan_id] = {
+        "plan_id": plan_id,
+        "phase": "queued",
+        "usps": req.usps,
+        "n_districts": seats,
+        "request": req.model_dump(),
+        "step": 0,
+        "best_score": None,
+        "best_max_dev_pct": None,
+        "best_polsby_popper_mean": None,
+        "result": None,
+        "error": None,
+    }
+
+    def _run():
+        try:
+            _SINGLE_PLANS[plan_id]["phase"] = "loading"
+            g = graph_mod.build_graph(req.usps, unit=req.unit)
+            _SINGLE_PLANS[plan_id]["phase"] = "districting"
+
+            best = {"score": float("inf")}
+            def _cb(partition, sc):
+                _SINGLE_PLANS[plan_id]["step"] += 1
+                if sc.score < best["score"]:
+                    best["score"] = sc.score
+                    _SINGLE_PLANS[plan_id]["best_score"] = float(sc.score)
+                    _SINGLE_PLANS[plan_id]["best_max_dev_pct"] = float(sc.max_abs_deviation_pct)
+                    _SINGLE_PLANS[plan_id]["best_polsby_popper_mean"] = float(sc.polsby_popper_mean)
+
+            plan = engine.generate_plan(
+                g, n_districts=seats,
+                seed_strategy=req.seed_strategy,
+                epsilon=req.epsilon,
+                chain_length=req.chain_length,
+                weights=req.weights,
+                random_seed=req.random_seed,
+                progress_cb=_cb,
+            )
+            _SINGLE_PLANS[plan_id]["phase"] = "done"
+            _SINGLE_PLANS[plan_id]["result"] = {
+                "plan_id": plan.plan_id,
+                "usps": plan.usps,
+                "unit": plan.unit,
+                "n_districts": plan.n_districts,
+                "seed_strategy": plan.seed_strategy,
+                "epsilon": plan.epsilon,
+                "chain_length": plan.chain_length,
+                "weights": plan.weights,
+                "random_seed": plan.random_seed,
+                "elapsed_sec": plan.elapsed_sec,
+                "accepted_steps": plan.accepted_steps,
+                "scorecard": plan.scorecard,
+                "assignment": plan.assignment,
+            }
+        except Exception as e:
+            import traceback as _tb
+            _SINGLE_PLANS[plan_id]["phase"] = "failed"
+            _SINGLE_PLANS[plan_id]["error"] = str(e)
+            _SINGLE_PLANS[plan_id]["traceback"] = _tb.format_exc()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"plan_id": plan_id}
+
+
+@app.get("/api/single-plan/{plan_id}/status")
+def single_plan_status(plan_id: str):
+    if plan_id not in _SINGLE_PLANS:
+        raise HTTPException(404, f"Unknown plan: {plan_id}")
+    s = _SINGLE_PLANS[plan_id]
+    # Only return the lightweight progress fields here, not the (potentially large)
+    # full result + assignment.
+    return {k: v for k, v in s.items() if k not in ("result", "request")}
+
+
+@app.get("/api/single-plan/{plan_id}/result")
+def single_plan_result(plan_id: str):
+    if plan_id not in _SINGLE_PLANS:
+        raise HTTPException(404, f"Unknown plan: {plan_id}")
+    s = _SINGLE_PLANS[plan_id]
+    if s["phase"] != "done" or not s.get("result"):
+        raise HTTPException(409, f"Plan {plan_id} not done yet (phase={s['phase']})")
+    return s["result"]
+
+
+@app.get("/api/single-plan/{plan_id}/districts.geojson")
+def single_plan_districts(plan_id: str):
+    """Dissolved district polygons for a completed single-plan run."""
+    if plan_id not in _SINGLE_PLANS:
+        raise HTTPException(404, f"Unknown plan: {plan_id}")
+    s = _SINGLE_PLANS[plan_id]
+    if s["phase"] != "done" or not s.get("result"):
+        raise HTTPException(409, f"Plan {plan_id} not done yet")
+    from redistrict import loader
+    from redistrict.graph import _aggregate_to_blockgroups
+    import pandas as pd
+    res = s["result"]
+    blocks = loader.load_blocks(res["usps"])
+    units_gdf = (_aggregate_to_blockgroups(blocks)
+                 if res["unit"] == "blockgroup" else blocks)
+    df = pd.DataFrame.from_dict(res["assignment"], orient="index",
+                                columns=["district"])
+    df.index.name = "GEOID"
+    df = df.reset_index()
+    df["GEOID"] = df["GEOID"].astype(str)
+    units_gdf = units_gdf.copy()
+    units_gdf["GEOID"] = units_gdf["GEOID"].astype(str)
+    merged = units_gdf.merge(df, on="GEOID", how="inner")
+    merged["district"] = merged["district"].astype(int)
+    diss = merged.dissolve(by="district", as_index=False)[["district", "geometry"]]
+    diss["geometry"] = diss.geometry.simplify(0.005, preserve_topology=True)
+    return _gdf_to_geojson(diss)
+
+
+@app.get("/api/single-plan/{plan_id}/pdf")
+def single_plan_pdf(plan_id: str):
+    """Stream the PDF (with embedded provenance) for a completed plan."""
+    from fastapi.responses import FileResponse
+    if plan_id not in _SINGLE_PLANS:
+        raise HTTPException(404, f"Unknown plan: {plan_id}")
+    s = _SINGLE_PLANS[plan_id]
+    if s["phase"] != "done" or not s.get("result"):
+        raise HTTPException(409, f"Plan {plan_id} not done yet")
+    res = s["result"]
+    from redistrict import pdf_export, loader
+    from redistrict.graph import _aggregate_to_blockgroups
+    from redistrict.engine import PlanResult
+
+    plan = PlanResult(
+        plan_id=res["plan_id"],
+        usps=res["usps"],
+        unit=res["unit"],
+        n_districts=res["n_districts"],
+        seed_strategy=res["seed_strategy"],
+        epsilon=res["epsilon"],
+        chain_length=res["chain_length"],
+        weights=res["weights"],
+        random_seed=res["random_seed"],
+        elapsed_sec=res["elapsed_sec"],
+        accepted_steps=res["accepted_steps"],
+        assignment=res["assignment"],
+        scorecard=res["scorecard"],
+    )
+    blocks = loader.load_blocks(res["usps"])
+    units_gdf = (_aggregate_to_blockgroups(blocks)
+                 if res["unit"] == "blockgroup" else blocks)
+    out = pdf_export.export_pdf(plan, units_gdf)
+    return FileResponse(out, media_type="application/pdf",
+                        filename=out.name)
+
+
 @app.post("/api/batches/{batch_id}/retry")
 def retry_failed(batch_id: str, req: WorkerControl):
     """Retry any state with phase=failed. Force-rebuilds graph caches."""

@@ -12,6 +12,7 @@ import { CounterModal } from './CounterModal';
 import { HelpPanel } from './HelpPanel';
 import { StateDetailModal } from './StateDetailModal';
 import { UpdateBanner } from './UpdateBanner';
+import { SinglePlanView } from './SinglePlanView';
 import './App.css';
 
 const qc = new QueryClient({
@@ -29,6 +30,8 @@ export default function App() {
 }
 
 function NationwideBatch() {
+  const [mode, setMode] = useState<'nationwide' | 'single'>('nationwide');
+  const [singleSeed, setSingleSeed] = useState<{ usps?: string; unit?: string; epsilon?: number; chainLength?: number }>({});
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [showDistricts, setShowDistricts] = useState(true);
   const [selectedUsps, setSelectedUsps] = useState<string | null>(null);
@@ -36,15 +39,32 @@ function NationwideBatch() {
   return (
     <div className="layout">
       <header>
-        <h1>Redistrict — Nationwide Batch</h1>
+        <div className="mode-tabs">
+          <button
+            className={mode === 'nationwide' ? 'active' : ''}
+            onClick={() => setMode('nationwide')}
+          >Nationwide batch</button>
+          <button
+            className={mode === 'single' ? 'active' : ''}
+            onClick={() => setMode('single')}
+          >Single state</button>
+        </div>
+        <h1>Redistrict</h1>
         <p className="sub">
-          Population-only U.S. congressional redistricting · gerrychain ReCom MCMC ·
-          live progress map
+          Population-only U.S. congressional redistricting · gerrychain ReCom MCMC
         </p>
         <UpdateBanner />
       </header>
       <main>
-        {!activeBatchId ? (
+        {mode === 'single' ? (
+          <SinglePlanView
+            initialUsps={singleSeed.usps}
+            initialUnit={singleSeed.unit}
+            initialEpsilon={singleSeed.epsilon}
+            initialChainLength={singleSeed.chainLength}
+            onBack={() => setMode('nationwide')}
+          />
+        ) : !activeBatchId ? (
           <BatchPicker onWatch={setActiveBatchId} />
         ) : (
           <LiveBatchView
@@ -55,6 +75,11 @@ function NationwideBatch() {
             onStateClick={setSelectedUsps}
             selectedUsps={selectedUsps}
             onClosePanel={() => setSelectedUsps(null)}
+            onTuneState={(usps, unit, epsilon, chainLength) => {
+              setSingleSeed({ usps, unit, epsilon, chainLength });
+              setSelectedUsps(null);
+              setMode('single');
+            }}
           />
         )}
       </main>
@@ -260,6 +285,7 @@ interface LiveBatchViewProps {
   onStateClick: (usps: string) => void;
   selectedUsps: string | null;
   onClosePanel: () => void;
+  onTuneState: (usps: string, unit: string, epsilon: number, chainLength: number) => void;
 }
 
 function LiveBatchView(props: LiveBatchViewProps) {
@@ -271,6 +297,7 @@ function LiveBatchView(props: LiveBatchViewProps) {
     onStateClick,
     selectedUsps,
     onClosePanel,
+    onTuneState,
   } = props;
   const queryClient = useQueryClient();
   const [counterModal, setCounterModal] = useState<
@@ -360,9 +387,15 @@ function LiveBatchView(props: LiveBatchViewProps) {
           statuses={statuses}
           showDistricts={showDistricts}
           onStateClick={onStateClick}
+          highlightUsps={selectedUsps}
         />
         <PhaseLegend />
       </div>
+      {selectedUsps && (
+        <div className="opening-toast">
+          <span className="spinner" /> Opening {selectedUsps}…
+        </div>
+      )}
 
       {counterModal && (
         <CounterModal
@@ -381,6 +414,15 @@ function LiveBatchView(props: LiveBatchViewProps) {
           batchId={batchId}
           usps={selectedUsps}
           status={statuses.find((x) => x.usps === selectedUsps)}
+          manifest={status.data?.manifest}
+          onTune={(u) =>
+            onTuneState(
+              u,
+              status.data!.manifest.unit,
+              status.data!.manifest.epsilon,
+              status.data!.manifest.chain_length,
+            )
+          }
           onClose={onClosePanel}
         />
       )}
