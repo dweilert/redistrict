@@ -116,6 +116,25 @@ def batch_status(batch_id: str):
 _DISTRICT_GEOJSON_CACHE: dict[tuple[str, str], dict] = {}
 
 
+@app.get("/api/batches/{batch_id}/states/{usps}/districts/{district}/cities")
+def district_cities(batch_id: str, usps: str, district: int):
+    """Return list of Census places (cities/CDPs) whose representative point falls
+    inside the given district's polygon. Sorted by land area desc."""
+    from redistrict import places
+    bd = batch_mod.batch_dir(batch_id)
+    gpkg = bd / f"{usps}_districts.gpkg"
+    if not gpkg.exists():
+        raise HTTPException(404, f"No districts file for {usps} in batch {batch_id}")
+    gdf = gpd.read_file(gpkg)
+    matching = gdf[gdf["district"].astype(int) == int(district)]
+    if len(matching) == 0:
+        raise HTTPException(404, f"No district {district} in {usps}")
+    poly = matching.geometry.iloc[0]
+    statefp = config.STATES.get(usps, {}).get("fips", "")
+    cities = places.cities_in_polygon(poly, statefp, usps)
+    return {"usps": usps, "district": int(district), "cities": cities}
+
+
 @app.get("/api/batches/{batch_id}/states/{usps}/plan")
 def state_plan(batch_id: str, usps: str):
     bd = batch_mod.batch_dir(batch_id)

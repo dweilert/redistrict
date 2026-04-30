@@ -70,6 +70,17 @@ export const api = {
   statesGeoJSON: () => get<GeoJSON.FeatureCollection>('/api/states.geojson'),
   stateDistricts: (batchId: string, usps: string) =>
     get<GeoJSON.FeatureCollection>(`/api/batches/${batchId}/states/${usps}/districts.geojson`),
+  districtCities: (batchId: string, usps: string, district: number) =>
+    get<{
+      usps: string;
+      district: number;
+      cities: Array<{
+        name: string;
+        kind: string;
+        population: number;
+        area_sqmi: number;
+      }>;
+    }>(`/api/batches/${batchId}/states/${usps}/districts/${district}/cities`),
   statePlan: (batchId: string, usps: string) =>
     get<{
       plan_id: string;

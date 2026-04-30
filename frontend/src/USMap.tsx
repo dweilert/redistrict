@@ -143,7 +143,7 @@ export function USMap({ batchId, statuses, showDistricts, onStateClick }: Props)
       </div>
       {zoomHint && (
         <div className="zoom-hint">
-          Hold <span className="kbd">⌘</span> (or <span className="kbd">Ctrl</span>) and scroll to zoom
+          Hold <span className="kbd">Cmd</span> (Mac) or <span className="kbd">Ctrl</span> (Win/Linux) and scroll to zoom
         </div>
       )}
       <svg

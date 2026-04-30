@@ -2,7 +2,7 @@
  * Modal dialog showing one state's details: phase, totals, and the per-district
  * scorecard (population, deviation %, area, compactness).
  */
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { geoMercator, geoPath } from 'd3-geo';
 import { api, type StateStatus } from './api';
@@ -36,6 +36,8 @@ interface Props {
 }
 
 export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
+  const [showLabels, setShowLabels] = useState(true);
+  const [selectedDistrict, setSelectedDistrict] = useState<number | null>(null);
   const planQuery = useQuery({
     queryKey: ['state-plan', batchId, usps],
     queryFn: () => api.statePlan(batchId, usps),
@@ -75,8 +77,23 @@ export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
         <div className="modal-state-body">
           {/* LEFT: big district map */}
           <div className="modal-state-map">
+            <div className="state-map-toolbar">
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={showLabels}
+                  onChange={(e) => setShowLabels(e.target.checked)}
+                />
+                Show district numbers
+              </label>
+            </div>
             {districtsFC ? (
-              <StateDistrictMap fc={districtsFC} />
+              <StateDistrictMap
+                fc={districtsFC}
+                showLabels={showLabels}
+                selectedDistrict={selectedDistrict}
+                onDistrictClick={setSelectedDistrict}
+              />
             ) : status?.phase === 'done' ? (
               <div className="muted center-pad">Loading districts…</div>
             ) : (
@@ -86,6 +103,14 @@ export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
 
           {/* RIGHT: data panels */}
           <div className="modal-state-info">
+            {selectedDistrict !== null && (
+              <DistrictCitiesPanel
+                batchId={batchId}
+                usps={usps}
+                district={selectedDistrict}
+                onClose={() => setSelectedDistrict(null)}
+              />
+            )}
             {status && (
               <div className="state-meta">
                 <span>
@@ -177,6 +202,58 @@ export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
   );
 }
 
+function DistrictCitiesPanel({
+  batchId, usps, district, onClose,
+}: {
+  batchId: string;
+  usps: string;
+  district: number;
+  onClose: () => void;
+}) {
+  const cities = useQuery({
+    queryKey: ['cities', batchId, usps, district],
+    queryFn: () => api.districtCities(batchId, usps, district),
+    retry: false,
+  });
+  const color = DISTRICT_PALETTE[district % DISTRICT_PALETTE.length];
+
+  return (
+    <div className="cities-panel">
+      <div className="cities-header">
+        <span
+          className="district-swatch"
+          style={{ background: color, width: 18, height: 18 }}
+        />
+        <strong>District {district + 1}</strong>
+        <span className="muted">— cities & places</span>
+        <button className="link-btn" onClick={onClose} style={{ marginLeft: 'auto' }}>
+          ✕ close
+        </button>
+      </div>
+      {cities.isLoading && <p className="muted small">Loading places…</p>}
+      {cities.error && <p className="err small">Could not load places.</p>}
+      {cities.data && cities.data.cities.length === 0 && (
+        <p className="muted small">No incorporated places found in this district.</p>
+      )}
+      {cities.data && cities.data.cities.length > 0 && (
+        <ul className="cities-list">
+          {cities.data.cities.map((c, i) => (
+            <li key={i} title={`${c.area_sqmi.toFixed(1)} sq mi`}>
+              <span className="city-name">{c.name}</span>
+              {c.kind && <span className="muted small">({c.kind})</span>}
+              <span style={{ marginLeft: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                {c.population > 0
+                  ? c.population.toLocaleString()
+                  : <span className="muted small">—</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function KV({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div className="kv">
@@ -193,7 +270,17 @@ function KV({ k, v }: { k: string; v: React.ReactNode }) {
  *  get pushed apart by force-directed relaxation; leader lines connect each
  *  displaced label back to its district centroid. Avoids overlap in busy states
  *  like Texas, Massachusetts, New Jersey. */
-function StateDistrictMap({ fc }: { fc: GeoJSON.FeatureCollection }) {
+function StateDistrictMap({
+  fc,
+  showLabels = true,
+  selectedDistrict,
+  onDistrictClick,
+}: {
+  fc: GeoJSON.FeatureCollection;
+  showLabels?: boolean;
+  selectedDistrict?: number | null;
+  onDistrictClick?: (district: number) => void;
+}) {
   const W = 800;
   const H = 540;
   const projection = useMemo(() => geoMercator().fitSize([W, H], fc), [fc]);
@@ -212,7 +299,7 @@ function StateDistrictMap({ fc }: { fc: GeoJSON.FeatureCollection }) {
         pos: valid ? [c[0], c[1]] : [W / 2, H / 2],
       };
     });
-    const MIN_DIST = 30; // label radius pad in px
+    const MIN_DIST = 22; // label radius pad in px
     for (let iter = 0; iter < 80; iter++) {
       let moved = false;
       for (let i = 0; i < initial.length; i++) {
@@ -256,10 +343,22 @@ function StateDistrictMap({ fc }: { fc: GeoJSON.FeatureCollection }) {
         const did = (f.properties as { district?: number } | null)?.district ?? i;
         const color = DISTRICT_PALETTE[did % DISTRICT_PALETTE.length];
         const d = pathGen(f) ?? '';
-        return <path key={i} d={d} fill={color} stroke="#fff" strokeWidth={1} />;
+        const isSelected = selectedDistrict === did;
+        return (
+          <path
+            key={i}
+            d={d}
+            fill={color}
+            stroke={isSelected ? '#0f172a' : '#fff'}
+            strokeWidth={isSelected ? 3 : 1}
+            opacity={selectedDistrict !== null && !isSelected ? 0.55 : 1}
+            style={{ cursor: 'pointer' }}
+            onClick={() => onDistrictClick?.(did)}
+          />
+        );
       })}
       {/* Leader lines (only drawn when label was displaced) */}
-      {labels.map((l) => {
+      {showLabels && labels.map((l) => {
         const dx = l.pos[0] - l.pin[0];
         const dy = l.pos[1] - l.pin[1];
         if (Math.hypot(dx, dy) < 4) return null;
@@ -277,7 +376,7 @@ function StateDistrictMap({ fc }: { fc: GeoJSON.FeatureCollection }) {
         );
       })}
       {/* Pin dots */}
-      {labels.map((l) => (
+      {showLabels && labels.map((l) => (
         <circle
           key={`pin-${l.idx}`}
           cx={l.pin[0]}
@@ -287,17 +386,17 @@ function StateDistrictMap({ fc }: { fc: GeoJSON.FeatureCollection }) {
         />
       ))}
       {/* Numbered chips */}
-      {labels.map((l) => (
+      {showLabels && labels.map((l) => (
         <g
           key={`chip-${l.idx}`}
           transform={`translate(${l.pos[0]},${l.pos[1]})`}
           pointerEvents="none"
         >
-          <circle r={13} fill="#0f172a" stroke="#fff" strokeWidth={2} opacity={0.92} />
+          <circle r={10} fill="#0f172a" stroke="#fff" strokeWidth={1.5} opacity={0.92} />
           <text
             textAnchor="middle"
             dominantBaseline="central"
-            fontSize={12}
+            fontSize={10}
             fontWeight={700}
             fill="#fff"
           >
