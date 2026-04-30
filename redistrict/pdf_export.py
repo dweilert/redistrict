@@ -125,11 +125,12 @@ def export_pdf(plan: PlanResult, units_gdf, out_path: Path | None = None) -> Pat
 
     story.append(PageBreak())
     story.append(Paragraph("Per-District Metrics", h1))
-    rows = [["#", "Population", "Deviation %", "Area (sq mi)",
+    rows = [["District", "Population", "Deviation %", "Area (sq mi)",
              "Perimeter (mi)", "PP", "Units"]]
     for d in sc["per_district"]:
+        # Districts displayed 1-indexed (D0 internal → "1" in user-facing output).
         rows.append([
-            str(d["district"]),
+            str(int(d["district"]) + 1),
             f"{d['population']:,}",
             f"{d['deviation_pct']:+.4f}",
             f"{d['area_sqmi']:,.1f}",

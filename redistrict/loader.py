@@ -157,7 +157,18 @@ def build_blocks(usps: str, *, force: bool = False) -> Path:
     return out
 
 
+_BLOCKS_MEM_CACHE: dict[str, gpd.GeoDataFrame] = {}
+
+
 def load_blocks(usps: str) -> gpd.GeoDataFrame:
-    """Load the cached blocks GeoPackage for a state, building it if needed."""
+    """Load the cached blocks GeoPackage for a state, building it if needed.
+
+    Module-level memo keeps the GeoDataFrame in memory across Streamlit reruns —
+    block GeoPackages are 30–80 MB so re-reading them per render is painful.
+    """
+    if usps in _BLOCKS_MEM_CACHE:
+        return _BLOCKS_MEM_CACHE[usps]
     p = build_blocks(usps)
-    return gpd.read_file(p, layer="blocks")
+    gdf = gpd.read_file(p, layer="blocks")
+    _BLOCKS_MEM_CACHE[usps] = gdf
+    return gdf

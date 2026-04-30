@@ -23,6 +23,7 @@ import pickle
 from pathlib import Path
 
 import geopandas as gpd
+import networkx as nx
 import numpy as np
 import pandas as pd
 from gerrychain import Graph
@@ -94,6 +95,11 @@ def build_graph(usps: str, *, unit: str = "blockgroup", force: bool = False) -> 
         g.edges[u, v]["shared_perim"] = sp
         fixed += 1
 
+    # Bridge disconnected components (islands) with synthetic edges so the dual graph is
+    # connected — required by gerrychain ReCom. CA, FL, NY, MA, MI, etc. have islands
+    # that don't share a TIGER boundary with the mainland.
+    g = _ensure_connected(g)
+
     g.graph["usps"] = usps.upper()
     g.graph["unit"] = unit
     g.graph["total_population"] = int(gdf["population"].sum())
@@ -107,3 +113,46 @@ def build_graph(usps: str, *, unit: str = "blockgroup", force: bool = False) -> 
 
 def graph_population(g: Graph) -> int:
     return g.graph["total_population"]
+
+
+def _ensure_connected(g: Graph) -> Graph:
+    """Add synthetic edges so the dual graph becomes a single connected component.
+
+    For each non-largest component, pick the (cn, mn) pair with the smallest centroid
+    distance between a node `cn` in that component and a node `mn` in the largest
+    component. Add an edge with shared_perim=0 and synthetic=True. After all components
+    are bridged the graph is connected and gerrychain ReCom proposals work correctly.
+    """
+    if nx.is_connected(g):
+        return g
+
+    components = list(nx.connected_components(g))
+    components.sort(key=len, reverse=True)
+    main = set(components[0])
+    main_nodes = list(main)
+    main_xy = np.array([(g.nodes[n]["centroid_x"], g.nodes[n]["centroid_y"])
+                        for n in main_nodes])
+
+    n_added = 0
+    for comp in components[1:]:
+        best = None  # (cn, mn, dist)
+        for cn in comp:
+            cx, cy = g.nodes[cn]["centroid_x"], g.nodes[cn]["centroid_y"]
+            d = np.hypot(main_xy[:, 0] - cx, main_xy[:, 1] - cy)
+            i = int(np.argmin(d))
+            if best is None or d[i] < best[2]:
+                best = (cn, main_nodes[i], float(d[i]))
+        if best is None:
+            continue
+        cn, mn, _ = best
+        g.add_edge(cn, mn, shared_perim=0.0, synthetic=True)
+        n_added += 1
+        # Fold this component into 'main' so subsequent components can attach to it too.
+        for n in comp:
+            main.add(n)
+            main_nodes.append(n)
+        main_xy = np.array([(g.nodes[n]["centroid_x"], g.nodes[n]["centroid_y"])
+                            for n in main_nodes])
+
+    print(f"  bridged {n_added} disconnected component(s) with synthetic edges")
+    return g

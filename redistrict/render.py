@@ -20,13 +20,15 @@ def render_plan_map(units_gdf: gpd.GeoDataFrame, assignment: dict,
                     title: str | None = None,
                     figsize: tuple[float, float] = (8.5, 8.5),
                     show_county: bool = True,
-                    counties_gdf: gpd.GeoDataFrame | None = None) -> bytes:
+                    counties_gdf: gpd.GeoDataFrame | None = None,
+                    label_districts: bool = True) -> bytes:
     """Render the plan as a PNG.
 
     Args:
         units_gdf: GeoDataFrame with a GEOID column matching keys in `assignment`.
         assignment: mapping of GEOID → district id.
         counties_gdf: optional county outline overlay (thin gray line).
+        label_districts: place a numeric label at each district's centroid.
     """
     gdf = units_gdf.copy()
     gdf["GEOID"] = gdf["GEOID"].astype(str)
@@ -43,6 +45,25 @@ def render_plan_map(units_gdf: gpd.GeoDataFrame, assignment: dict,
               edgecolor="white", linewidth=1.0)
     if show_county and counties_gdf is not None:
         counties_gdf.plot(ax=ax, facecolor="none", edgecolor="#555", linewidth=0.4)
+
+    if label_districts:
+        # Use 'representative_point' (always inside the polygon) instead of centroid,
+        # which can land outside non-convex shapes. Districts are 1-indexed in display.
+        for _, row in diss.iterrows():
+            try:
+                pt = row.geometry.representative_point()
+            except Exception:
+                pt = row.geometry.centroid
+            ax.annotate(
+                str(int(row["district"]) + 1),
+                xy=(pt.x, pt.y),
+                ha="center", va="center",
+                fontsize=20, fontweight="bold", color="white",
+                bbox=dict(boxstyle="circle,pad=0.35",
+                          facecolor="black", edgecolor="white", linewidth=1.5,
+                          alpha=0.85),
+            )
+
     ax.set_axis_off()
     if title:
         ax.set_title(title, fontsize=11)
