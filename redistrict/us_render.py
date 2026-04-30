@@ -37,16 +37,18 @@ from .render import PALETTE
 
 
 PHASE_COLORS = {
-    "queued":      "#e5e7eb",   # waiting — light gray
-    "queued_skip": "#9ca3af",   # 1-seat state, no work — darker gray
-    # In-progress phases all use the same pale amber so the user sees "this state is
+    "queued":      "#cbd5e1",
+    # Single-seat states get a slightly different green so they're visually distinct
+    # from districted-done states but still clearly "complete" (nothing to do).
+    "queued_skip": "#86efac",
+    "skipped":     "#86efac",
+    # In-progress phases all use the same vivid amber so the user sees "this state is
     # being worked on right now" at a glance. Specific phase shows in the table below.
-    "loading":     "#fde68a",
-    "graph":       "#fde68a",
-    "districting": "#fde68a",
-    "done":        "#34d399",   # finished — green
-    "failed":      "#f87171",   # red
-    "skipped":     "#9ca3af",
+    "loading":     "#f59e0b",
+    "graph":       "#f59e0b",
+    "districting": "#f59e0b",
+    "done":        "#10b981",
+    "failed":      "#ef4444",
     "?":           "#ffffff",
 }
 
@@ -509,24 +511,32 @@ def render_result_map(batch_id: str, title: str | None = None,
 
 
 def _draw_state_districts(ax, usps: str, plan_path: Path, *, projection: str):
-    """Read the assignment CSV and draw the dissolved districts for one state."""
-    from . import loader
-    from .graph import _aggregate_to_blockgroups
+    """Draw the dissolved districts for one state.
 
-    # Determine resolution by inspecting GEOID lengths in the CSV (12 for blockgroup, 15 for block).
-    df = pd.read_csv(plan_path, names=["GEOID", "district"], dtype={"GEOID": str})
-    sample_len = len(df["GEOID"].iloc[0])
-    blocks = loader.load_blocks(usps)
-    if sample_len == 12:
-        units = _aggregate_to_blockgroups(blocks)
+    Fast path: if the worker already saved a pre-dissolved gpkg next to
+    plan_path (e.g. <USPS>_districts.gpkg), use that — milliseconds to load
+    and plot.
+
+    Slow fallback: read the assignment CSV, load the full state block file,
+    merge + dissolve. ~5s per state on first call (cached after).
+    """
+    bd = plan_path.parent
+    fast_gpkg = bd / f"{usps}_districts.gpkg"
+    if fast_gpkg.exists():
+        diss = gpd.read_file(fast_gpkg).to_crs(projection)
     else:
-        units = blocks
-    units["GEOID"] = units["GEOID"].astype(str)
+        from . import loader
+        from .graph import _aggregate_to_blockgroups
+        df = pd.read_csv(plan_path, names=["GEOID", "district"], dtype={"GEOID": str})
+        sample_len = len(df["GEOID"].iloc[0])
+        blocks = loader.load_blocks(usps)
+        units = (_aggregate_to_blockgroups(blocks) if sample_len == 12 else blocks)
+        units["GEOID"] = units["GEOID"].astype(str)
+        merged = units.merge(df, on="GEOID", how="left")
+        merged = merged.dropna(subset=["district"])
+        merged["district"] = merged["district"].astype(int)
+        diss = merged.dissolve(by="district", as_index=False).to_crs(projection)
 
-    merged = units.merge(df, on="GEOID", how="left")
-    merged = merged.dropna(subset=["district"])
-    merged["district"] = merged["district"].astype(int)
-    diss = merged.dissolve(by="district", as_index=False).to_crs(projection)
     n_d = int(diss["district"].max()) + 1
     colors = [PALETTE[i % len(PALETTE)] for i in range(n_d)]
     diss.plot(ax=ax, color=[colors[int(d)] for d in diss["district"]],

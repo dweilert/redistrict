@@ -22,3 +22,5 @@ __pycache__/
 # claude harness settings (local)
 .claude/
 data/batches/
+frontend/node_modules/
+frontend/dist/

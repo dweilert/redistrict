@@ -49,7 +49,12 @@ def ensure_batch_dir(batch_id: str) -> Path:
 
 
 def write_status(batch_id: str, usps: str, **fields) -> None:
-    """Atomic-ish status write — write to .tmp then rename."""
+    """Atomic-ish status write — write to .tmp then rename.
+
+    On a success-or-restart phase transition (queued / loading / graph / districting /
+    done) we drop any stale `error` / `traceback` fields so a previously-failed retry
+    doesn't keep showing the old failure context.
+    """
     p = batch_dir(batch_id) / f"{usps}_status.json"
     existing = {}
     if p.exists():
@@ -57,6 +62,10 @@ def write_status(batch_id: str, usps: str, **fields) -> None:
             existing = json.loads(p.read_text())
         except json.JSONDecodeError:
             pass
+    new_phase = fields.get("phase")
+    if new_phase and new_phase != "failed":
+        existing.pop("error", None)
+        existing.pop("traceback", None)
     existing.update(fields)
     existing["usps"] = usps
     existing["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -138,6 +147,30 @@ def _run_state(args: dict) -> dict:
         (bd / f"{usps}_plan.json").write_text(
             json.dumps(plan_meta, indent=2, default=_json_default)
         )
+
+        # Pre-dissolve district polygons and save a tiny gpkg so the live US map
+        # renderer doesn't have to re-read the entire block file every time.
+        # File is ~50–500 KB per state vs 30-80 MB block files.
+        try:
+            from . import loader
+            from .graph import _aggregate_to_blockgroups
+            blocks = loader.load_blocks(usps)
+            if args["unit"] == "blockgroup":
+                units_gdf = _aggregate_to_blockgroups(blocks)
+            else:
+                units_gdf = blocks
+            units_gdf = units_gdf.copy()
+            units_gdf["GEOID"] = units_gdf["GEOID"].astype(str)
+            units_gdf["district"] = units_gdf["GEOID"].map(plan.assignment)
+            units_gdf = units_gdf.dropna(subset=["district"])
+            units_gdf["district"] = units_gdf["district"].astype(int)
+            diss = units_gdf.dissolve(by="district", as_index=False)[
+                ["district", "geometry"]
+            ]
+            diss.to_file(bd / f"{usps}_districts.gpkg", driver="GPKG")
+        except Exception as e:
+            # Non-fatal — renderer falls back to the slow path.
+            print(f"  [{usps}] district gpkg save failed: {e}", flush=True)
 
         sc = plan.scorecard
         write_status(batch_id, usps,
