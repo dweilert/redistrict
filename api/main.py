@@ -62,6 +62,42 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/census-files")
+def census_files_status():
+    """For each Census download we depend on, report whether a newer version
+    is available upstream. Frontend shows a banner if anything is stale."""
+    from redistrict import census_downloads
+    return census_downloads.check_for_updates()
+
+
+@app.post("/api/census-files/{key}/download")
+def census_files_download(key: str):
+    """Force re-download of one Census file."""
+    from redistrict import census_downloads
+    if key not in census_downloads.FILES:
+        raise HTTPException(404, f"Unknown census file key: {key}")
+    f = census_downloads.FILES[key]
+    census_downloads.download(f, force=True, verbose=False)
+    # Invalidate any in-memory caches that depend on this file.
+    if key == "state_outlines":
+        try:
+            from redistrict import us_render
+            us_render._STATE_BOUNDARIES_CACHE = None
+        except Exception:
+            pass
+        global _STATE_BOUNDARIES_CACHE
+        _STATE_BOUNDARIES_CACHE = None
+    elif key == "places":
+        from redistrict import places
+        places._PLACES_CACHE = None
+        places._PLACE_POP_CACHE.clear()
+    elif key == "cd119":
+        from redistrict import cd_official
+        cd_official._OFFICIAL_CACHE = None
+        cd_official._SCORECARD_CACHE.clear()
+    return {"downloaded": True, "key": key}
+
+
 @app.get("/api/states")
 def list_states():
     """Static metadata for every state we know about."""
@@ -114,6 +150,30 @@ def batch_status(batch_id: str):
 
 
 _DISTRICT_GEOJSON_CACHE: dict[tuple[str, str], dict] = {}
+
+
+@app.get("/api/states/{usps}/cd119.geojson")
+def state_cd119(usps: str):
+    """Officially-adopted current (119th Congress) districts for one state.
+
+    Comes from the Census CB cb_2024_us_cd119 file. Geometries are simplified
+    server-side for fast browser rendering."""
+    from redistrict import cd_official
+    gdf = cd_official.load_state_districts(usps)
+    if len(gdf) == 0:
+        raise HTTPException(404, f"No CD119 entry for {usps}")
+    gdf = gdf.copy()
+    gdf["geometry"] = gdf.geometry.simplify(0.005, preserve_topology=True)
+    keep = gdf[["district", "NAMELSAD", "geometry"]].copy()
+    return _gdf_to_geojson(keep)
+
+
+@app.get("/api/states/{usps}/cd119/scorecard")
+def state_cd119_scorecard(usps: str):
+    """Same-shape scorecard as our engine output but computed against the
+    official current plan. Useful for side-by-side comparisons."""
+    from redistrict import cd_official
+    return cd_official.official_scorecard(usps)
 
 
 @app.get("/api/batches/{batch_id}/states/{usps}/districts/{district}/cities")

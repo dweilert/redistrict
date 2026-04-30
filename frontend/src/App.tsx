@@ -11,6 +11,7 @@ import { USMap, PhaseLegend, PHASE_COLORS } from './USMap';
 import { CounterModal } from './CounterModal';
 import { HelpPanel } from './HelpPanel';
 import { StateDetailModal } from './StateDetailModal';
+import { UpdateBanner } from './UpdateBanner';
 import './App.css';
 
 const qc = new QueryClient({
@@ -40,6 +41,7 @@ function NationwideBatch() {
           Population-only U.S. congressional redistricting · gerrychain ReCom MCMC ·
           live progress map
         </p>
+        <UpdateBanner />
       </header>
       <main>
         {!activeBatchId ? (

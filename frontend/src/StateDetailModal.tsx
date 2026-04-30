@@ -38,6 +38,7 @@ interface Props {
 export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
   const [showLabels, setShowLabels] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState<number | null>(null);
+  const [overlayOpacity, setOverlayOpacity] = useState(0); // 0–100, 0 = no overlay
   const planQuery = useQuery({
     queryKey: ['state-plan', batchId, usps],
     queryFn: () => api.statePlan(batchId, usps),
@@ -48,6 +49,22 @@ export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
     queryKey: ['districts', batchId, usps],
     queryFn: () => api.stateDistricts(batchId, usps),
     enabled: status?.phase === 'done',
+    retry: false,
+  });
+  // Official current (119th Congress) districts — only fetched once we
+  // start showing the overlay (>0 opacity).
+  const officialQuery = useQuery({
+    queryKey: ['cd119', usps],
+    queryFn: () => api.stateCD119(usps),
+    enabled: overlayOpacity > 0,
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false,
+  });
+  const officialScorecardQuery = useQuery({
+    queryKey: ['cd119-scorecard', usps],
+    queryFn: () => api.stateCD119Scorecard(usps),
+    enabled: overlayOpacity > 0,
+    staleTime: 24 * 60 * 60 * 1000,
     retry: false,
   });
 
@@ -87,9 +104,27 @@ export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
                 Show district numbers
               </label>
             </div>
+            <div className="overlay-toggle">
+              <span title="Overlays the state's officially-adopted current U.S. House districts (119th Congress) on top of the generated plan. Drag the slider to fade between the two.">
+                Current US House districts
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={overlayOpacity}
+                onChange={(e) => setOverlayOpacity(parseInt(e.target.value))}
+              />
+              <span className="muted small" style={{ minWidth: 36 }}>
+                {overlayOpacity}%
+              </span>
+            </div>
             {districtsFC ? (
               <StateDistrictMap
                 fc={districtsFC}
+                officialFC={officialQuery.data}
+                overlayOpacity={overlayOpacity / 100}
                 showLabels={showLabels}
                 selectedDistrict={selectedDistrict}
                 onDistrictClick={setSelectedDistrict}
@@ -148,6 +183,38 @@ export function StateDetailModal({ batchId, usps, status, onClose }: Props) {
                   <KV k="County splits" v={sc.county_splits} />
                   <KV k="Districts drawn" v={plan.n_districts} />
                 </div>
+
+                {officialScorecardQuery.data?.available && (
+                  <>
+                    <h3>Generated vs. current (119th Congress)</h3>
+                    <table className="modal-table compare-table">
+                      <thead>
+                        <tr>
+                          <th>Metric</th>
+                          <th>Generated</th>
+                          <th>Current (119th)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>Max |deviation|</td>
+                          <td>{sc.max_abs_deviation_pct.toFixed(4)}%</td>
+                          <td>{officialScorecardQuery.data.max_abs_deviation_pct?.toFixed(4)}%</td>
+                        </tr>
+                        <tr>
+                          <td>Polsby–Popper mean</td>
+                          <td>{sc.polsby_popper_mean.toFixed(3)}</td>
+                          <td>{officialScorecardQuery.data.polsby_popper_mean?.toFixed(3)}</td>
+                        </tr>
+                        <tr>
+                          <td>County splits</td>
+                          <td>{sc.county_splits}</td>
+                          <td>{officialScorecardQuery.data.county_splits}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </>
+                )}
 
                 <h3>Per-district detail</h3>
                 <table className="modal-table">
@@ -272,17 +339,22 @@ function KV({ k, v }: { k: string; v: React.ReactNode }) {
  *  like Texas, Massachusetts, New Jersey. */
 function StateDistrictMap({
   fc,
+  officialFC,
+  overlayOpacity = 0,
   showLabels = true,
   selectedDistrict,
   onDistrictClick,
 }: {
   fc: GeoJSON.FeatureCollection;
+  officialFC?: GeoJSON.FeatureCollection;
+  overlayOpacity?: number;
   showLabels?: boolean;
   selectedDistrict?: number | null;
   onDistrictClick?: (district: number) => void;
 }) {
   const W = 800;
   const H = 540;
+  // Fit projection to the union of generated + official so they line up exactly.
   const projection = useMemo(() => geoMercator().fitSize([W, H], fc), [fc]);
   const pathGen = useMemo(() => geoPath(projection), [projection]);
 
@@ -385,6 +457,25 @@ function StateDistrictMap({
           fill="#0f172a"
         />
       ))}
+      {/* Official-current overlay (119th Congress districts) — drawn ABOVE
+          our generated polygons but BELOW the labels. Uses no fill (just dashed
+          outline) so the underlying district colors stay legible while the
+          opacity slider controls the prominence of the comparison. */}
+      {overlayOpacity > 0 && officialFC && officialFC.features.map((f, i) => {
+        const d = pathGen(f) ?? '';
+        return (
+          <path
+            key={`official-${i}`}
+            d={d}
+            fill="none"
+            stroke="#0f172a"
+            strokeWidth={2.5}
+            strokeDasharray="6 4"
+            opacity={overlayOpacity}
+            pointerEvents="none"
+          />
+        );
+      })}
       {/* Numbered chips */}
       {showLabels && labels.map((l) => (
         <g

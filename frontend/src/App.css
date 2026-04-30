@@ -448,6 +448,67 @@ button.link-btn {
 }
 .modal-state-map { position: relative; }
 
+.update-banner {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-left: 4px solid #2563eb;
+  border-radius: 6px;
+  padding: 10px 16px;
+  margin: 8px 0 16px;
+  font-size: 13px;
+}
+.update-banner ul {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+}
+.update-banner li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid #dbeafe;
+}
+.update-banner li:first-child { border-top: none; }
+.update-banner button {
+  white-space: nowrap;
+}
+
+/* Overlay controls inside the state detail modal */
+.overlay-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  font-size: 12px;
+  z-index: 2;
+  flex-wrap: wrap;
+}
+.overlay-toggle input[type='range'] { width: 90px; }
+.overlay-legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #475569;
+  margin-top: 4px;
+}
+.overlay-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  border: 1px solid #1e293b;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
 .cities-panel {
   background: #fff;
   border: 1px solid #fbbf24;

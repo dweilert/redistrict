@@ -63,8 +63,23 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
   return r.json();
 }
 
+export type CensusFileStatus = {
+  key: string;
+  label: string;
+  why: string;
+  url: string;
+  present: boolean;
+  local_last_modified: string | null;
+  remote_last_modified: string | null;
+  update_available: boolean;
+  downloaded_at: string | null;
+};
+
 export const api = {
   health: () => get<{ status: string }>('/api/health'),
+  censusFiles: () => get<CensusFileStatus[]>('/api/census-files'),
+  downloadCensusFile: (key: string) =>
+    post<{ downloaded: boolean }>(`/api/census-files/${key}/download`),
   listBatches: () => get<BatchListItem[]>('/api/batches'),
   batchStatus: (id: string) => get<BatchStatusResponse>(`/api/batches/${id}/status`),
   statesGeoJSON: () => get<GeoJSON.FeatureCollection>('/api/states.geojson'),
@@ -81,6 +96,27 @@ export const api = {
         area_sqmi: number;
       }>;
     }>(`/api/batches/${batchId}/states/${usps}/districts/${district}/cities`),
+  stateCD119: (usps: string) =>
+    get<GeoJSON.FeatureCollection>(`/api/states/${usps}/cd119.geojson`),
+  stateCD119Scorecard: (usps: string) =>
+    get<{
+      available: boolean;
+      n_districts?: number;
+      total_population?: number;
+      target_population?: number;
+      max_abs_deviation_pct?: number;
+      polsby_popper_mean?: number;
+      polsby_popper_min?: number;
+      county_splits?: number;
+      per_district?: Array<{
+        district: number;
+        population: number;
+        deviation_pct: number;
+        area_sqmi: number;
+        perimeter_mi: number;
+        polsby_popper: number;
+      }>;
+    }>(`/api/states/${usps}/cd119/scorecard`),
   statePlan: (batchId: string, usps: string) =>
     get<{
       plan_id: string;
