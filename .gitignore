@@ -1,0 +1,23 @@
+# data artifacts (large; reproducible from sources)
+data/processed/
+data/cache/
+data/runs/
+data/exports/
+
+# raw census inputs (huge)
+tiger_blocks/
+pl94171/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.venv/
+.env
+
+# os
+.DS_Store
+
+# claude harness settings (local)
+.claude/

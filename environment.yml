@@ -1,0 +1,25 @@
+name: redistrict
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - geopandas
+  - shapely
+  - pyogrio
+  - pyproj
+  - rtree
+  - networkx
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - tqdm
+  - streamlit
+  - reportlab
+  - pillow
+  - pypdf
+  - pip
+  - pip:
+      - streamlit-folium
+      - folium
