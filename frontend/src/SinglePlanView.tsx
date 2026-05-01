@@ -256,7 +256,18 @@ function SinglePlanRunner({ planId, usps, chainLength }: { planId: string; usps:
       if (!d) return 800;
       return d.phase === 'done' || d.phase === 'failed' ? false : 800;
     },
+    retry: false,
   });
+
+  // If the server lost the plan (e.g. backend restart), tell the user.
+  if (status.error && /Unknown plan|404/.test(String(status.error))) {
+    return (
+      <div className="failure-block">
+        <strong>Plan lost.</strong> The backend restarted and the in-progress
+        chain was discarded. Click <strong>Generate plan</strong> again to start over.
+      </div>
+    );
+  }
 
   const isDone = status.data?.phase === 'done';
   const isRunning = status.data?.phase === 'districting' || status.data?.phase === 'loading' || status.data?.phase === 'graph';
