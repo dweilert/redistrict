@@ -32,10 +32,13 @@ interface Props {
   onClose: () => void;
 }
 
+type RightTab = 'plan' | 'catalog' | 'params';
+
 export function StateDetailModal({ batchId, usps, status, manifest, onTune, onClose }: Props) {
   const [showLabels, setShowLabels] = useState(true);
   const [selectedDistrict, setSelectedDistrict] = useState<number | null>(null);
   const [overlayOpacity, setOverlayOpacity] = useState(0); // 0–100, 0 = no overlay
+  const [rightTab, setRightTab] = useState<RightTab>('plan');
   const planQuery = useQuery({
     queryKey: ['state-plan', batchId, usps],
     queryFn: () => api.statePlan(batchId, usps),
@@ -153,8 +156,17 @@ export function StateDetailModal({ batchId, usps, status, manifest, onTune, onCl
             )}
           </div>
 
-          {/* RIGHT: data panels */}
+          {/* RIGHT: tabbed data panels */}
           <div className="modal-state-info">
+            <div className="modal-right-tabs">
+              <button className={rightTab === 'plan' ? 'active' : ''}
+                      onClick={() => setRightTab('plan')}>📊 Plan</button>
+              <button className={rightTab === 'catalog' ? 'active' : ''}
+                      onClick={() => setRightTab('catalog')}>📚 Catalog</button>
+              <button className={rightTab === 'params' ? 'active' : ''}
+                      onClick={() => setRightTab('params')}>⚙️ Run params</button>
+            </div>
+
             {selectedDistrict !== null && (
               <CitiesPanel
                 district={selectedDistrict}
@@ -163,136 +175,136 @@ export function StateDetailModal({ batchId, usps, status, manifest, onTune, onCl
                 onClose={() => setSelectedDistrict(null)}
               />
             )}
-            {status && (
-              <div className="state-meta">
-                <span>
-                  Phase: <span className={`phase phase-${status.phase}`}>{status.phase}</span>
-                </span>
-                {status.elapsed_sec !== undefined && (
-                  <span>Elapsed: {status.elapsed_sec.toFixed(1)} s</span>
-                )}
-              </div>
-            )}
 
-            {status?.phase === 'failed' && status.error && (
-              <div className="failure-block">
-                <strong>Failure:</strong> <code>{status.error}</code>
-              </div>
-            )}
-
-            {(status?.phase === 'queued_skip' || status?.phase === 'skipped') && (
-              <div className="info-block">
-                <strong>Single-seat state.</strong> The whole state is one district —
-                nothing for the engine to compute.
-              </div>
-            )}
-
-            {planQuery.isLoading && <p className="muted">Loading plan…</p>}
-
-            {sc && plan && (
+            {rightTab === 'plan' && (
               <>
-                <h3>Plan summary</h3>
-                <div className="kv-grid">
-                  <KV k="Total population" v={sc.total_population.toLocaleString()} />
-                  <KV k="Target / district" v={sc.target_population.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
-                  <KV k="Max |deviation|" v={`${sc.max_abs_deviation_pct.toFixed(4)}%`} />
-                  <KV k="Polsby–Popper mean" v={sc.polsby_popper_mean.toFixed(3)} />
-                  <KV k="County splits" v={sc.county_splits} />
-                  <KV k="Districts drawn" v={plan.n_districts} />
-                </div>
+                {status && (
+                  <div className="state-meta">
+                    <span>
+                      Phase: <span className={`phase phase-${status.phase}`}>{status.phase}</span>
+                    </span>
+                    {status.elapsed_sec !== undefined && (
+                      <span>Elapsed: {status.elapsed_sec.toFixed(1)} s</span>
+                    )}
+                  </div>
+                )}
 
-                {officialScorecardQuery.data?.available && (
+                {status?.phase === 'failed' && status.error && (
+                  <div className="failure-block">
+                    <strong>Failure:</strong> <code>{status.error}</code>
+                  </div>
+                )}
+
+                {(status?.phase === 'queued_skip' || status?.phase === 'skipped') && (
+                  <div className="info-block">
+                    <strong>Single-seat state.</strong> The whole state is one district —
+                    nothing for the engine to compute.
+                  </div>
+                )}
+
+                {planQuery.isLoading && <p className="muted">Loading plan…</p>}
+
+                {sc && plan && (
                   <>
-                    <h3>Generated vs. current (119th Congress)</h3>
-                    <table className="modal-table compare-table">
+                    <h3>Plan summary</h3>
+                    <div className="kv-grid">
+                      <KV k="Total population" v={sc.total_population.toLocaleString()} />
+                      <KV k="Target / district" v={sc.target_population.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+                      <KV k="Max |deviation|" v={`${sc.max_abs_deviation_pct.toFixed(4)}%`} />
+                      <KV k="Polsby–Popper mean" v={sc.polsby_popper_mean.toFixed(3)} />
+                      <KV k="County splits" v={sc.county_splits} />
+                      <KV k="Districts drawn" v={plan.n_districts} />
+                    </div>
+
+                    {officialScorecardQuery.data?.available && (
+                      <>
+                        <h3>Generated vs. current (119th Congress)</h3>
+                        <table className="modal-table compare-table">
+                          <thead>
+                            <tr>
+                              <th>Metric</th>
+                              <th>Generated</th>
+                              <th>Current (119th)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td>Max |deviation|</td>
+                              <td>{sc.max_abs_deviation_pct.toFixed(4)}%</td>
+                              <td>{officialScorecardQuery.data.max_abs_deviation_pct?.toFixed(4)}%</td>
+                            </tr>
+                            <tr>
+                              <td>Polsby–Popper mean</td>
+                              <td>{sc.polsby_popper_mean.toFixed(3)}</td>
+                              <td>{officialScorecardQuery.data.polsby_popper_mean?.toFixed(3)}</td>
+                            </tr>
+                            <tr>
+                              <td>County splits</td>
+                              <td>{sc.county_splits}</td>
+                              <td>{officialScorecardQuery.data.county_splits}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </>
+                    )}
+
+                    <h3>Per-district detail</h3>
+                    <table className="modal-table">
                       <thead>
                         <tr>
-                          <th>Metric</th>
-                          <th>Generated</th>
-                          <th>Current (119th)</th>
+                          <th>#</th>
+                          <th>Population</th>
+                          <th>Dev %</th>
+                          <th>Area mi²</th>
+                          <th>PP</th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          <td>Max |deviation|</td>
-                          <td>{sc.max_abs_deviation_pct.toFixed(4)}%</td>
-                          <td>{officialScorecardQuery.data.max_abs_deviation_pct?.toFixed(4)}%</td>
-                        </tr>
-                        <tr>
-                          <td>Polsby–Popper mean</td>
-                          <td>{sc.polsby_popper_mean.toFixed(3)}</td>
-                          <td>{officialScorecardQuery.data.polsby_popper_mean?.toFixed(3)}</td>
-                        </tr>
-                        <tr>
-                          <td>County splits</td>
-                          <td>{sc.county_splits}</td>
-                          <td>{officialScorecardQuery.data.county_splits}</td>
-                        </tr>
+                        {sc.per_district.map((d) => {
+                          const id = Number(d.district);
+                          const color = DISTRICT_PALETTE[id % DISTRICT_PALETTE.length];
+                          return (
+                            <tr key={id}>
+                              <td>
+                                <span
+                                  className="district-swatch"
+                                  style={{ background: color }}
+                                />
+                                <strong>{id + 1}</strong>
+                              </td>
+                              <td>{d.population.toLocaleString()}</td>
+                              <td>{d.deviation_pct >= 0 ? '+' : ''}{d.deviation_pct.toFixed(3)}</td>
+                              <td>{d.area_sqmi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                              <td>{d.polsby_popper.toFixed(2)}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </>
                 )}
-
-                <h3>Per-district detail</h3>
-                <table className="modal-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Population</th>
-                      <th>Dev %</th>
-                      <th>Area mi²</th>
-                      <th>PP</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sc.per_district.map((d) => {
-                      const id = Number(d.district);
-                      const color = DISTRICT_PALETTE[id % DISTRICT_PALETTE.length];
-                      return (
-                        <tr key={id}>
-                          <td>
-                            <span
-                              className="district-swatch"
-                              style={{ background: color }}
-                            />
-                            <strong>{id + 1}</strong>
-                          </td>
-                          <td>{d.population.toLocaleString()}</td>
-                          <td>{d.deviation_pct >= 0 ? '+' : ''}{d.deviation_pct.toFixed(3)}</td>
-                          <td>{d.area_sqmi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
-                          <td>{d.polsby_popper.toFixed(2)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-
-                <details className="modal-run-params" open>
-                  <summary><strong>📚 Catalog</strong> for {usps}</summary>
-                  <CatalogPanel
-                    usps={usps}
-                    selectedPlanUuid={null}
-                    onSelect={(uuid) => {
-                      // Switch the modal's map to show this catalog entry by
-                      // navigating to a tiny inline viewer. For now, surface
-                      // a notice that the user can pick one as default to
-                      // change the nationwide composition.
-                      void uuid;
-                    }}
-                  />
-                </details>
-
-                <details className="modal-run-params">
-                  <summary>Run parameters</summary>
-                  <div className="kv-grid">
-                    <KV k="Seed strategy" v={plan.seed_strategy} />
-                    <KV k="ε (tolerance)" v={`${(plan.epsilon * 100).toFixed(2)}%`} />
-                    <KV k="Chain length" v={plan.chain_length} />
-                    <KV k="Random seed" v={plan.random_seed} />
-                    <KV k="Plan ID" v={<code>{plan.plan_id.slice(0, 8)}…</code>} />
-                  </div>
-                </details>
               </>
+            )}
+
+            {rightTab === 'catalog' && (
+              <CatalogPanel
+                usps={usps}
+                selectedPlanUuid={null}
+                onSelect={() => {}}
+              />
+            )}
+
+            {rightTab === 'params' && plan && (
+              <div className="kv-grid">
+                <KV k="Seed strategy" v={plan.seed_strategy} />
+                <KV k="ε (tolerance)" v={`${(plan.epsilon * 100).toFixed(2)}%`} />
+                <KV k="Chain length" v={plan.chain_length} />
+                <KV k="Random seed" v={plan.random_seed} />
+                <KV k="Plan ID" v={<code>{plan.plan_id.slice(0, 8)}…</code>} />
+              </div>
+            )}
+            {rightTab === 'params' && !plan && (
+              <p className="muted">Run parameters appear once the plan finishes loading.</p>
             )}
           </div>
         </div>

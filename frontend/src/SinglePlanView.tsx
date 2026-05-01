@@ -306,10 +306,18 @@ function CatalogViewerRight({
   const fullName = STATE_NAMES[usps] ?? usps;
   const sc = (entry?.scorecard ?? {}) as {
     available?: boolean;
+    target_population?: number;
     max_abs_deviation_pct?: number;
     polsby_popper_mean?: number;
     county_splits?: number;
     total_population?: number;
+    per_district?: Array<{
+      district: number;
+      population: number;
+      deviation_pct: number;
+      area_sqmi?: number;
+      polsby_popper?: number;
+    }>;
   };
 
   return (
@@ -354,32 +362,70 @@ function CatalogViewerRight({
           Pick a catalog entry on the left to view its districts here.
         </div>
       )}
+
+      {/* Per-district detail (matches the Nationwide modal's table) */}
+      {sc.per_district && sc.per_district.length > 0 && (
+        <>
+          <h4>Per-district detail</h4>
+          <table className="modal-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Population</th>
+                <th>Dev %</th>
+                {sc.per_district[0].area_sqmi !== undefined && <th>Area mi²</th>}
+                {sc.per_district[0].polsby_popper !== undefined && <th>PP</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {sc.per_district.map((d) => (
+                <tr key={d.district}>
+                  <td>
+                    <span
+                      className="district-swatch"
+                      style={{ background: DISTRICT_PALETTE[d.district % DISTRICT_PALETTE.length] }}
+                    />
+                    <strong>{d.district + 1}</strong>
+                  </td>
+                  <td>{d.population.toLocaleString()}</td>
+                  <td>{d.deviation_pct >= 0 ? '+' : ''}{d.deviation_pct.toFixed(3)}</td>
+                  {d.area_sqmi !== undefined && (
+                    <td>{d.area_sqmi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                  )}
+                  {d.polsby_popper !== undefined && (
+                    <td>{d.polsby_popper.toFixed(2)}</td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </>
   );
 }
 
 
-/** Static preview of the picked state, shown before any plan is generated. */
+/** Static preview of the picked state — shows its current default districts
+ *  (Census 119th by default, or whatever the user has set as default in the
+ *  catalog) so the user immediately sees real district lines before tuning. */
 function StateSelectionPreview({ usps }: { usps: string }) {
-  const states = useQuery({
-    queryKey: ['states-geojson'],
-    queryFn: () => api.statesGeoJSON(),
-    staleTime: 60 * 60 * 1000,
-  });
   const fullName = STATE_NAMES[usps] ?? usps;
   const seats = STATE_SEATS[usps] ?? 0;
-
-  // Project just this state.
-  const W = 700;
-  const H = 420;
-  const fc = states.data && {
-    type: 'FeatureCollection',
-    features: states.data.features.filter(
-      (f) => (f.properties as { usps?: string } | null)?.usps === usps
-    ),
-  } as GeoJSON.FeatureCollection | undefined;
-  const projection = fc ? geoMercator().fitSize([W, H], fc) : null;
-  const pathGen = projection ? geoPath(projection) : null;
+  // Resolve the state's default plan_uuid first.
+  const catalog = useQuery({
+    queryKey: ['catalog', usps],
+    queryFn: () => api.catalogList(usps),
+    staleTime: 30_000,
+  });
+  const defaultUuid = catalog.data?.default_plan_uuid ?? 'census-current';
+  const districts = useQuery({
+    queryKey: ['catalog-districts', usps, defaultUuid],
+    queryFn: () => api.catalogDistricts(usps, defaultUuid),
+    enabled: !!defaultUuid,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
 
   return (
     <div className="state-preview">
@@ -388,20 +434,26 @@ function StateSelectionPreview({ usps }: { usps: string }) {
         <span className="muted">({usps})</span>
         <span className="state-seats-pill">{seats} U.S. House seats</span>
       </div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="state-preview-svg">
-        {fc && pathGen && fc.features.map((f, i) => (
-          <path
-            key={i}
-            d={pathGen(f) ?? ''}
-            fill="#cbd5e1"
-            stroke="#1e293b"
-            strokeWidth={1.5}
-          />
-        ))}
-      </svg>
+      {districts.isLoading && <div className="muted center-pad">Loading current districts…</div>}
+      {districts.error && (
+        <div className="muted center-pad">
+          Couldn't load default districts. The state outline isn't available.
+        </div>
+      )}
+      {districts.data && (
+        <DistrictMap
+          fc={districts.data}
+          showLabels={true}
+          className="state-preview-svg"
+        />
+      )}
       <p className="muted small" style={{ marginTop: 8 }}>
-        Set ε / chain length / weights on the left, then click{' '}
-        <strong>Generate plan</strong> to start the engine.
+        Showing the state's <strong>current default</strong> (
+        {defaultUuid === 'census-current'
+          ? 'official 119th-Congress districts'
+          : 'a tuned plan from your catalog'}
+        ). Set ε / chain length / weights on the left, then click{' '}
+        <strong>Generate plan</strong> to try a different cut.
       </p>
     </div>
   );
