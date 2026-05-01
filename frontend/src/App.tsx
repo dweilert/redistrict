@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   QueryClient,
   QueryClientProvider,
@@ -40,9 +41,12 @@ function NationwideBatch() {
   // show through). Set the moment a state is clicked.
   const [openingUsps, setOpeningUsps] = useState<string | null>(null);
   function handleStateClick(usps: string) {
-    setOpeningUsps(usps);
+    // Force the overlay to paint BEFORE the heavy modal mount/data fetch
+    // batches in. flushSync commits this state synchronously so the user
+    // sees feedback within one frame of clicking.
+    flushSync(() => setOpeningUsps(usps));
     setSelectedUsps(usps);
-    window.setTimeout(() => setOpeningUsps(null), 600);
+    window.setTimeout(() => setOpeningUsps(null), 800);
   }
 
   return (
