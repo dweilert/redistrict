@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, type StateStatus } from './api';
 import { DistrictMap, DISTRICT_PALETTE } from './DistrictMap';
 import { CitiesPanel } from './CitiesPanel';
+import { CatalogPanel } from './CatalogPanel';
 
 const STATE_NAMES: Record<string, string> = {
   AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
@@ -265,6 +266,21 @@ export function StateDetailModal({ batchId, usps, status, manifest, onTune, onCl
                     })}
                   </tbody>
                 </table>
+
+                <details className="modal-run-params" open>
+                  <summary><strong>📚 Catalog</strong> for {usps}</summary>
+                  <CatalogPanel
+                    usps={usps}
+                    selectedPlanUuid={null}
+                    onSelect={(uuid) => {
+                      // Switch the modal's map to show this catalog entry by
+                      // navigating to a tiny inline viewer. For now, surface
+                      // a notice that the user can pick one as default to
+                      // change the nationwide composition.
+                      void uuid;
+                    }}
+                  />
+                </details>
 
                 <details className="modal-run-params">
                   <summary>Run parameters</summary>

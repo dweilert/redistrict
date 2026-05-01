@@ -32,17 +32,32 @@ const DISTRICT_PALETTE = [
   '#E377C2', '#17BECF', '#BCBD22', '#7F7F7F', '#AEC7E8',
 ];
 
+/** Where the per-state district choropleths come from:
+ *   'batch'    — currently active batch's per-state plans
+ *   'defaults' — composed from each state's catalog default
+ *   'census'   — official 119th-Congress districts for every state
+ */
+export type NationwideSource = 'batch' | 'defaults' | 'census';
+
 interface Props {
   batchId: string;
   statuses: StateStatus[];
   showDistricts: boolean;
+  source?: NationwideSource;
   onStateClick?: (usps: string) => void;
   highlightUsps?: string | null;
 }
 
 // Memoized below so a parent state change (e.g. opening overlay) doesn't trigger
 // a full re-render of all 50 states' SVG paths.
-function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUsps }: Props) {
+function USMapImpl({
+  batchId,
+  statuses,
+  showDistricts,
+  source = 'batch',
+  onStateClick,
+  highlightUsps,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [{ width, height }, setSize] = useState({ width: 1100, height: 660 });
   // Zoom + pan state (transform on an inner <g>).
@@ -51,6 +66,10 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
   const [drag, setDrag] = useState<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null);
   // "Hold ⌘/Ctrl to zoom" hint, auto-clears after a couple seconds.
   const [zoomHint, setZoomHint] = useState(false);
+  // Timestamp of the last wheel event — used to suppress click-state
+  // selection when the user is wheel-zooming (so a stray click during the
+  // scroll gesture doesn't open a state's modal).
+  const lastWheelAt = useRef(0);
 
   function zoomIn() {
     setZoom((z) => Math.min(8, z * 1.4));
@@ -65,6 +84,24 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
   function resetView() {
     setZoom(1);
     setPan({ x: 0, y: 0 });
+  }
+  /** Zoom about a point so the location under (anchorX, anchorY) stays put. */
+  function zoomAt(anchorX: number, anchorY: number, factor: number) {
+    setZoom((z) => {
+      const next = Math.max(1, Math.min(8, z * factor));
+      // Solve for new pan that keeps (ax, ay) fixed under the SVG transform.
+      // The transform is: x' = pan.x + scale * x_world. We want the world
+      // point at (ax, ay) before to map to (ax, ay) after. With p_old, z_old:
+      //   ax = pan.x_old + z_old * x_w → x_w = (ax - pan.x_old) / z_old
+      //   ax = pan.x_new + z_new * x_w → pan.x_new = ax - z_new * x_w
+      setPan((p) => {
+        if (next === 1) return { x: 0, y: 0 };
+        const xw = (anchorX - p.x) / z;
+        const yw = (anchorY - p.y) / z;
+        return { x: anchorX - next * xw, y: anchorY - next * yw };
+      });
+      return next;
+    });
   }
 
   // Track container size so the map fills the panel.
@@ -89,11 +126,18 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
     staleTime: 60 * 60 * 1000,
   });
 
-  // SINGLE bundled fetch of every done state's districts (replaces 44 parallel
-  // per-state fetches that were stalling the main thread for seconds).
+  // SINGLE bundled fetch of every state's districts. Endpoint depends on
+  // which 'source' the user picked at the top of the nationwide view:
+  //   'batch'    — districts from the currently active batch
+  //   'defaults' — each state's catalog default (mostly Census, plus tunes)
+  //   'census'   — every state's official 119th-Congress districts
   const allDistricts = useQuery({
-    queryKey: ['all-districts', batchId],
-    queryFn: () => api.allDistricts(batchId),
+    queryKey: ['all-districts', source, batchId],
+    queryFn: () => {
+      if (source === 'census') return api.nationwideCensus();
+      if (source === 'defaults') return api.nationwideDefaults();
+      return api.allDistricts(batchId);
+    },
     enabled: showDistricts,
     staleTime: 60 * 60 * 1000,
     retry: false,
@@ -220,9 +264,20 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
             window.setTimeout(() => setZoomHint(false), 2000);
             return;
           }
+          // Prevent the browser's page zoom + the click-on-state that would
+          // otherwise fire when the wheel lands. stopPropagation isn't enough
+          // — we mark drag.moved so the upcoming click doesn't open a state.
           e.preventDefault();
-          if (e.deltaY < 0) zoomIn();
-          else zoomOut();
+          // Mark wheel time so any click that fires within the next 200ms
+          // (e.g. a stray click during the zoom gesture) is ignored.
+          lastWheelAt.current = performance.now();
+          if (drag) setDrag({ ...drag, moved: true });
+          // Anchor the zoom on the cursor position so users zoom into where
+          // they're hovering, not the map's center.
+          const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+          const ax = e.clientX - rect.left;
+          const ay = e.clientY - rect.top;
+          zoomAt(ax, ay, e.deltaY < 0 ? 1.15 : 1 / 1.15);
         }}
       >
         <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
@@ -242,8 +297,11 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
             <g
               key={usps}
               onClick={() => {
-                // Suppress click if user just dragged.
+                // Suppress click if user just dragged OR was wheel-zooming
+                // within the last 200ms (so the modifier+wheel gesture
+                // doesn't accidentally pop a state modal).
                 if (drag?.moved) return;
+                if (performance.now() - lastWheelAt.current < 200) return;
                 onStateClick?.(usps);
               }}
               style={{ cursor: 'pointer' }}

@@ -148,6 +148,31 @@ def _run_state(args: dict) -> dict:
             json.dumps(plan_meta, indent=2, default=_json_default)
         )
 
+        # Auto-add a catalog entry so this batch's per-state plan is saved
+        # alongside any user-tuned entries. Default isn't changed if one is
+        # already set (set_default is intentionally NOT called here).
+        try:
+            from . import catalog
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+            catalog.save_entry(
+                usps,
+                name=f"Nationwide {stamp}",
+                source="nationwide",
+                parameters={
+                    "unit": args["unit"],
+                    "epsilon": args["epsilon"],
+                    "chain_length": args["chain_length"],
+                    "seed_strategy": args["seed_strategy"],
+                    "weights": args["weights"] or {},
+                    "random_seed": plan.random_seed,
+                },
+                scorecard=plan.scorecard,
+                assignment=plan.assignment,
+                batch_id=batch_id,
+            )
+        except Exception as e:
+            print(f"  [{usps}] catalog auto-save failed: {e}", flush=True)
+
         # Pre-dissolve district polygons and save a tiny gpkg so the live US map
         # renderer doesn't have to re-read the entire block file every time.
         # File is ~50–500 KB per state vs 30-80 MB block files.

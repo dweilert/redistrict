@@ -203,6 +203,215 @@ def state_cd119(usps: str):
     return _gdf_to_geojson(keep)
 
 
+# ---- catalog endpoints ------------------------------------------------------
+
+class CatalogSaveRequest(BaseModel):
+    name: str
+    plan_id: str   # plan_id of an in-memory single-plan run
+
+
+class CatalogSetDefault(BaseModel):
+    plan_uuid: str
+
+
+@app.get("/api/states/{usps}/catalog")
+def catalog_list(usps: str):
+    from redistrict import catalog
+    entries = catalog.list_entries(usps)
+    return {"usps": usps.upper(),
+            "default_plan_uuid": catalog.get_default_uuid(usps),
+            "entries": entries}
+
+
+@app.get("/api/states/{usps}/catalog/{plan_uuid}")
+def catalog_get(usps: str, plan_uuid: str):
+    from redistrict import catalog
+    e = catalog.get_entry(usps, plan_uuid)
+    if e is None:
+        raise HTTPException(404, f"No catalog entry {plan_uuid} for {usps}")
+    return e.to_dict()
+
+
+@app.post("/api/states/{usps}/catalog")
+def catalog_save(usps: str, req: CatalogSaveRequest):
+    """Save the result of a completed single-plan run as a new catalog entry."""
+    from redistrict import catalog
+    if req.plan_id not in _SINGLE_PLANS:
+        raise HTTPException(404, f"Unknown single-plan {req.plan_id}")
+    s = _SINGLE_PLANS[req.plan_id]
+    if s["phase"] != "done" or not s.get("result"):
+        raise HTTPException(409, f"Plan {req.plan_id} not done yet")
+    res = s["result"]
+    if res["usps"].upper() != usps.upper():
+        raise HTTPException(400,
+                            f"Plan is for {res['usps']}, not {usps}")
+    entry = catalog.save_entry(
+        usps,
+        name=req.name,
+        source="single",
+        parameters={
+            "unit": res["unit"],
+            "epsilon": res["epsilon"],
+            "chain_length": res["chain_length"],
+            "seed_strategy": res["seed_strategy"],
+            "weights": res["weights"],
+            "random_seed": res["random_seed"],
+        },
+        scorecard=res["scorecard"],
+        assignment=res["assignment"],
+    )
+    return entry.to_dict()
+
+
+@app.delete("/api/states/{usps}/catalog/{plan_uuid}")
+def catalog_delete(usps: str, plan_uuid: str):
+    from redistrict import catalog
+    ok = catalog.delete_entry(usps, plan_uuid)
+    if not ok:
+        raise HTTPException(404, f"No catalog entry {plan_uuid} for {usps}")
+    return {"deleted": True}
+
+
+@app.post("/api/states/{usps}/catalog/set-default")
+def catalog_set_default(usps: str, req: CatalogSetDefault):
+    from redistrict import catalog
+    try:
+        catalog.set_default(usps, req.plan_uuid)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    return {"usps": usps.upper(), "default_plan_uuid": req.plan_uuid}
+
+
+@app.get("/api/states/{usps}/catalog/{plan_uuid}/districts.geojson")
+def catalog_districts_geojson(usps: str, plan_uuid: str):
+    """Return dissolved district polygons for a saved (or census-current)
+    catalog entry."""
+    from redistrict import catalog, cd_official, loader
+    from redistrict.graph import _aggregate_to_blockgroups
+    import pandas as pd
+
+    if plan_uuid == catalog.CENSUS_CURRENT:
+        # Use the existing CD119 endpoint's data.
+        gdf = cd_official.load_state_districts(usps)
+        if len(gdf) == 0:
+            raise HTTPException(404, f"No CD119 entry for {usps}")
+        gdf = gdf.copy()
+        gdf["geometry"] = gdf.geometry.simplify(0.005, preserve_topology=True)
+        gdf["district"] = gdf["district"].apply(
+            lambda v: int(v) - 1 if v is not None else None
+        )
+        gdf = gdf.dropna(subset=["district"])
+        return _gdf_to_geojson(gdf[["district", "NAMELSAD", "geometry"]])
+
+    e = catalog.get_entry(usps, plan_uuid)
+    if e is None:
+        raise HTTPException(404, f"No catalog entry {plan_uuid} for {usps}")
+    blocks = loader.load_blocks(usps)
+    units_gdf = (_aggregate_to_blockgroups(blocks)
+                 if e.parameters.get("unit") == "blockgroup" else blocks)
+    df = pd.DataFrame.from_dict(e.assignment, orient="index", columns=["district"])
+    df.index.name = "GEOID"
+    df = df.reset_index()
+    df["GEOID"] = df["GEOID"].astype(str)
+    units_gdf = units_gdf.copy()
+    units_gdf["GEOID"] = units_gdf["GEOID"].astype(str)
+    merged = units_gdf.merge(df, on="GEOID", how="inner")
+    merged["district"] = merged["district"].astype(int)
+    diss = merged.dissolve(by="district", as_index=False)[["district", "geometry"]]
+    diss["geometry"] = diss.geometry.simplify(0.005, preserve_topology=True)
+    return _gdf_to_geojson(diss)
+
+
+# ---- bundled nationwide views (driven by catalog defaults / census) ----------
+
+@app.get("/api/nationwide/census-districts.geojson")
+def nationwide_census_districts():
+    """Single bundled GeoJSON of every state's official 119th-Congress districts.
+    Used by the 'Census current' nationwide-map mode."""
+    from redistrict import cd_official
+    out_features: list[dict] = []
+    for usps in config.STATES:
+        try:
+            gdf = cd_official.load_state_districts(usps)
+        except Exception:
+            continue
+        if len(gdf) == 0:
+            continue
+        gdf = gdf.copy()
+        gdf["geometry"] = gdf.geometry.simplify(0.01, preserve_topology=True)
+        gdf["usps"] = usps
+        gdf["district"] = gdf["district"].apply(
+            lambda v: (int(v) - 1) if v is not None else None
+        )
+        gdf = gdf.dropna(subset=["district"])
+        out_features.extend(json.loads(
+            gdf[["usps", "district", "geometry"]].to_json()
+        )["features"])
+    return {"type": "FeatureCollection", "features": out_features}
+
+
+@app.get("/api/nationwide/default-districts.geojson")
+def nationwide_default_districts():
+    """Single bundled GeoJSON composed from each state's catalog default.
+    Used by the 'Catalog defaults' nationwide-map mode."""
+    from redistrict import catalog
+    import pandas as pd
+    from redistrict import loader, cd_official
+    from redistrict.graph import _aggregate_to_blockgroups
+    out_features: list[dict] = []
+    for usps in config.STATES:
+        d = catalog.get_default_uuid(usps)
+        try:
+            if d == catalog.CENSUS_CURRENT:
+                gdf = cd_official.load_state_districts(usps)
+                if len(gdf) == 0:
+                    continue
+                gdf = gdf.copy()
+                gdf["geometry"] = gdf.geometry.simplify(0.01, preserve_topology=True)
+                gdf["usps"] = usps
+                gdf["district"] = gdf["district"].apply(
+                    lambda v: (int(v) - 1) if v is not None else None
+                )
+                gdf = gdf.dropna(subset=["district"])
+                out_features.extend(json.loads(
+                    gdf[["usps", "district", "geometry"]].to_json()
+                )["features"])
+            else:
+                e = catalog.get_entry(usps, d)
+                if e is None:
+                    continue
+                blocks = loader.load_blocks(usps)
+                units_gdf = (_aggregate_to_blockgroups(blocks)
+                             if e.parameters.get("unit") == "blockgroup" else blocks)
+                df = pd.DataFrame.from_dict(e.assignment, orient="index",
+                                            columns=["district"])
+                df.index.name = "GEOID"
+                df = df.reset_index()
+                df["GEOID"] = df["GEOID"].astype(str)
+                units_gdf = units_gdf.copy()
+                units_gdf["GEOID"] = units_gdf["GEOID"].astype(str)
+                merged = units_gdf.merge(df, on="GEOID", how="inner")
+                merged["district"] = merged["district"].astype(int)
+                diss = merged.dissolve(by="district", as_index=False)[
+                    ["district", "geometry"]
+                ]
+                diss["geometry"] = diss.geometry.simplify(0.01, preserve_topology=True)
+                diss["usps"] = usps
+                out_features.extend(json.loads(
+                    diss[["usps", "district", "geometry"]].to_json()
+                )["features"])
+        except Exception:
+            continue
+    return {"type": "FeatureCollection", "features": out_features}
+
+
+@app.get("/api/nationwide/defaults-summary")
+def nationwide_defaults_summary():
+    """Stats for the 'Catalog defaults' mode badge."""
+    from redistrict import catalog
+    return catalog.composed_default_summary()
+
+
 @app.get("/api/states/{usps}/cd119/districts/{district}/cities")
 def cd119_district_cities(usps: str, district: int):
     """Cities/places inside one district of the official 119th-Congress plan.

@@ -85,6 +85,49 @@ export const api = {
   statesGeoJSON: () => get<GeoJSON.FeatureCollection>('/api/states.geojson'),
   stateDistricts: (batchId: string, usps: string) =>
     get<GeoJSON.FeatureCollection>(`/api/batches/${batchId}/states/${usps}/districts.geojson`),
+  // ---- catalog ----
+  catalogList: (usps: string) =>
+    get<{
+      usps: string;
+      default_plan_uuid: string;
+      entries: Array<{
+        plan_uuid: string;
+        usps: string;
+        name: string;
+        source: 'census' | 'nationwide' | 'single';
+        batch_id: string | null;
+        parameters: Record<string, unknown>;
+        scorecard: Record<string, unknown>;
+        created_at: string | null;
+        is_default?: boolean;
+      }>;
+    }>(`/api/states/${usps}/catalog`),
+  catalogSave: (usps: string, body: { name: string; plan_id: string }) =>
+    post<{ plan_uuid: string }>(`/api/states/${usps}/catalog`, body),
+  catalogDelete: (usps: string, planUuid: string) =>
+    fetch(`/api/states/${usps}/catalog/${planUuid}`, { method: 'DELETE' }).then(
+      (r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))),
+    ),
+  catalogSetDefault: (usps: string, plan_uuid: string) =>
+    post<{ default_plan_uuid: string }>(`/api/states/${usps}/catalog/set-default`, {
+      plan_uuid,
+    }),
+  catalogDistricts: (usps: string, planUuid: string) =>
+    get<GeoJSON.FeatureCollection>(
+      `/api/states/${usps}/catalog/${planUuid}/districts.geojson`,
+    ),
+  // ---- bundled nationwide views ----
+  nationwideCensus: () =>
+    get<GeoJSON.FeatureCollection>('/api/nationwide/census-districts.geojson'),
+  nationwideDefaults: () =>
+    get<GeoJSON.FeatureCollection>('/api/nationwide/default-districts.geojson'),
+  nationwideDefaultsSummary: () =>
+    get<{
+      defaults: Record<string, string>;
+      tuned_count: number;
+      total_states: number;
+    }>('/api/nationwide/defaults-summary'),
+
   allDistricts: (batchId: string) =>
     get<GeoJSON.FeatureCollection>(`/api/batches/${batchId}/all-districts.geojson`),
   districtCities: (batchId: string, usps: string, district: number) =>

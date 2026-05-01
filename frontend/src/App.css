@@ -843,6 +843,92 @@ button.link-btn {
   vertical-align: middle;
 }
 
+/* Catalog panel */
+.catalog-panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.catalog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.catalog-list { list-style: none; padding: 0; margin: 0; }
+.catalog-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.catalog-row:last-child { border-bottom: none; }
+.catalog-row.selected { background: #eff6ff; border-left: 3px solid #2563eb; padding-left: 9px; }
+.catalog-row-main { flex: 1; min-width: 0; }
+.catalog-row-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.catalog-name { font-weight: 600; }
+.default-star { font-size: 14px; }
+.catalog-source-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid;
+  font-weight: 600;
+}
+.src-census { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.src-nationwide { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+.src-single { background: #ddd6fe; color: #5b21b6; border-color: #c4b5fd; }
+.catalog-row-stats { margin-top: 2px; }
+.catalog-row-actions { display: flex; gap: 4px; }
+.catalog-row-actions button {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+.catalog-row-actions button.active { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+.catalog-row-actions button.danger { color: #b91c1c; border-color: #fca5a5; }
+
+.nationwide-source-tabs {
+  display: inline-flex;
+  gap: 0;
+  margin: 8px 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.nationwide-source-tabs button {
+  padding: 8px 14px;
+  font-size: 13px;
+  border: none;
+  border-right: 1px solid #cbd5e1;
+  border-radius: 0;
+  background: #f8fafc;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.nationwide-source-tabs button:last-child { border-right: none; }
+.nationwide-source-tabs button.active { background: #2563eb; color: #fff; }
+.nationwide-source-tabs button .badge {
+  background: rgba(255, 255, 255, 0.25);
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+.nationwide-source-tabs button:not(.active) .badge {
+  background: #e0e7ff;
+  color: #1e40af;
+}
+
+.save-catalog-form {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 14px 0;
+}
+
 .cities-panel {
   background: #fff;
   border: 1px solid #fbbf24;

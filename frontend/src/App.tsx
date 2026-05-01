@@ -14,6 +14,7 @@ import { StateDetailModal } from './StateDetailModal';
 import { UpdateBanner } from './UpdateBanner';
 import { SinglePlanView } from './SinglePlanView';
 import { ErrorBoundary } from './ErrorBoundary';
+import type { NationwideSource } from './USMap';
 import './App.css';
 
 const qc = new QueryClient({
@@ -55,7 +56,15 @@ export default function App() {
 
 function NationwideBatch() {
   const [mode, setMode] = useState<'nationwide' | 'single'>('nationwide');
-  const [singleSeed, setSingleSeed] = useState<{ usps?: string; unit?: string; epsilon?: number; chainLength?: number }>({});
+  const [singleSeed, setSingleSeed] = useState<{
+    usps?: string;
+    unit?: string;
+    epsilon?: number;
+    chainLength?: number;
+    seedStrategy?: string;
+    weights?: Record<string, number>;
+    randomSeed?: number | null;
+  }>({});
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [showDistricts, setShowDistricts] = useState(true);
   const [selectedUsps, setSelectedUsps] = useState<string | null>(null);
@@ -92,6 +101,9 @@ function NationwideBatch() {
               initialUnit={singleSeed.unit}
               initialEpsilon={singleSeed.epsilon}
               initialChainLength={singleSeed.chainLength}
+              initialSeedStrategy={singleSeed.seedStrategy}
+              initialWeights={singleSeed.weights}
+              initialRandomSeed={singleSeed.randomSeed}
               onBack={() => setMode('nationwide')}
             />
           ) : !activeBatchId ? (
@@ -105,8 +117,8 @@ function NationwideBatch() {
               onStateClick={handleStateClick}
               selectedUsps={selectedUsps}
               onClosePanel={() => setSelectedUsps(null)}
-              onTuneState={(usps, unit, epsilon, chainLength) => {
-                setSingleSeed({ usps, unit, epsilon, chainLength });
+              onTuneState={(seed) => {
+                setSingleSeed(seed);
                 setSelectedUsps(null);
                 setMode('single');
               }}
@@ -311,6 +323,16 @@ function BatchRow({ batch, onWatch }: { batch: BatchListItem; onWatch: (id: stri
   );
 }
 
+interface TuneSeed {
+  usps: string;
+  unit: string;
+  epsilon: number;
+  chainLength: number;
+  seedStrategy: string;
+  weights: Record<string, number>;
+  randomSeed: number | null;
+}
+
 interface LiveBatchViewProps {
   batchId: string;
   showDistricts: boolean;
@@ -319,7 +341,7 @@ interface LiveBatchViewProps {
   onStateClick: (usps: string) => void;
   selectedUsps: string | null;
   onClosePanel: () => void;
-  onTuneState: (usps: string, unit: string, epsilon: number, chainLength: number) => void;
+  onTuneState: (seed: TuneSeed) => void;
 }
 
 function LiveBatchView(props: LiveBatchViewProps) {
@@ -337,6 +359,13 @@ function LiveBatchView(props: LiveBatchViewProps) {
   const [counterModal, setCounterModal] = useState<
     'total' | 'done' | 'running' | 'failed' | 'skipped' | null
   >(null);
+  const [source, setSource] = useState<NationwideSource>('batch');
+  const defaultsSummary = useQuery({
+    queryKey: ['nationwide-defaults-summary'],
+    queryFn: () => api.nationwideDefaultsSummary(),
+    enabled: source === 'defaults',
+    staleTime: 30_000,
+  });
 
   const status = useQuery({
     queryKey: ['batch-status', batchId],
@@ -416,10 +445,40 @@ function LiveBatchView(props: LiveBatchViewProps) {
       </div>
 
       <div className="map-card">
+        <div className="nationwide-source-tabs">
+          <button
+            className={source === 'batch' ? 'active' : ''}
+            onClick={() => setSource('batch')}
+            title="Show the current batch's per-state plans."
+          >
+            📊 This batch
+          </button>
+          <button
+            className={source === 'defaults' ? 'active' : ''}
+            onClick={() => setSource('defaults')}
+            title="Compose the map from each state's catalog default."
+          >
+            ⭐ Catalog defaults
+            {defaultsSummary.data && (
+              <span className="badge">
+                {defaultsSummary.data.tuned_count} of{' '}
+                {defaultsSummary.data.total_states} tuned
+              </span>
+            )}
+          </button>
+          <button
+            className={source === 'census' ? 'active' : ''}
+            onClick={() => setSource('census')}
+            title="Show every state's official 119th-Congress districts."
+          >
+            🇺🇸 Census current
+          </button>
+        </div>
         <USMap
           batchId={batchId}
           statuses={statuses}
           showDistricts={showDistricts}
+          source={source}
           onStateClick={onStateClick}
           highlightUsps={selectedUsps}
         />
@@ -443,14 +502,25 @@ function LiveBatchView(props: LiveBatchViewProps) {
           usps={selectedUsps}
           status={statuses.find((x) => x.usps === selectedUsps)}
           manifest={status.data?.manifest}
-          onTune={(u) =>
-            onTuneState(
-              u,
-              status.data!.manifest.unit,
-              status.data!.manifest.epsilon,
-              status.data!.manifest.chain_length,
-            )
-          }
+          onTune={(u) => {
+            const m = status.data!.manifest as unknown as {
+              unit: string;
+              epsilon: number;
+              chain_length: number;
+              seed_strategy: string;
+              weights?: Record<string, number>;
+              random_seed_base?: number | null;
+            };
+            onTuneState({
+              usps: u,
+              unit: m.unit,
+              epsilon: m.epsilon,
+              chainLength: m.chain_length,
+              seedStrategy: m.seed_strategy ?? 'tree',
+              weights: m.weights ?? {},
+              randomSeed: m.random_seed_base ?? null,
+            });
+          }}
           onClose={onClosePanel}
         />
       )}

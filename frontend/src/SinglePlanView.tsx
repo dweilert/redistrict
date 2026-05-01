@@ -8,7 +8,7 @@
  * as the nationwide view, plus a one-click PDF export.
  */
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { geoMercator, geoPath } from 'd3-geo';
 import { api } from './api';
 import { DistrictMap, DISTRICT_PALETTE } from './DistrictMap';
@@ -16,6 +16,7 @@ import { CitiesPanel } from './CitiesPanel';
 import { SinglePlanHelp } from './SinglePlanHelp';
 import { LiveStatePreview } from './LiveStatePreview';
 import { PlanNarrative } from './PlanNarrative';
+import { CatalogPanel } from './CatalogPanel';
 
 const STATE_NAMES: Record<string, string> = {
   AL: 'Alabama', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
@@ -61,24 +62,34 @@ interface Props {
   initialUnit?: string;
   initialEpsilon?: number;
   initialChainLength?: number;
+  initialSeedStrategy?: string;
+  initialWeights?: Record<string, number>;
+  initialRandomSeed?: number | null;
   onBack?: () => void;
 }
+
+const DEFAULT_WEIGHTS: Record<string, number> = {
+  population_deviation: 10,
+  polsby_popper: 1,
+  county_splits: 1,
+  cut_edges: 0,
+  total_area_sqmi: 0,
+  perimeter_total: 0,
+  reock: 0,
+};
 
 export function SinglePlanView(props: Props) {
   const [usps, setUsps] = useState(props.initialUsps ?? 'IA');
   const [unit, setUnit] = useState(props.initialUnit ?? 'blockgroup');
   const [epsilonPct, setEpsilonPct] = useState((props.initialEpsilon ?? 0.01) * 100);
   const [chainLength, setChainLength] = useState(props.initialChainLength ?? 500);
-  const [seedStrategy, setSeedStrategy] = useState('tree');
-  const [randomSeed, setRandomSeed] = useState<number | ''>('');
+  const [seedStrategy, setSeedStrategy] = useState(props.initialSeedStrategy ?? 'tree');
+  const [randomSeed, setRandomSeed] = useState<number | ''>(
+    props.initialRandomSeed != null ? props.initialRandomSeed : ''
+  );
   const [weights, setWeights] = useState<Record<string, number>>({
-    population_deviation: 10,
-    polsby_popper: 1,
-    county_splits: 1,
-    cut_edges: 0,
-    total_area_sqmi: 0,
-    perimeter_total: 0,
-    reock: 0,
+    ...DEFAULT_WEIGHTS,
+    ...(props.initialWeights ?? {}),
   });
 
   const [planId, setPlanId] = useState<string | null>(null);
@@ -560,6 +571,17 @@ function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts, 
         </tbody>
       </table>
 
+      <SaveToCatalogForm planId={planId} usps={usps} />
+
+      <details className="modal-run-params" style={{ marginTop: 14 }} open>
+        <summary><strong>📚 Catalog</strong> for {usps}</summary>
+        <CatalogPanel
+          usps={usps}
+          selectedPlanUuid={null}
+          onSelect={() => {}}
+        />
+      </details>
+
       <a
         className="primary"
         style={{ display: 'inline-block', marginTop: 12, textDecoration: 'none' }}
@@ -570,5 +592,56 @@ function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts, 
         📄 Download PDF (with embedded plan data)
       </a>
     </>
+  );
+}
+
+/** Save-to-catalog form. Auto-names with state + datetime; user can edit. */
+function SaveToCatalogForm({ planId, usps }: { planId: string; usps: string }) {
+  const now = new Date();
+  const stamp =
+    now.getFullYear() +
+    '-' + String(now.getMonth() + 1).padStart(2, '0') +
+    '-' + String(now.getDate()).padStart(2, '0') +
+    ' ' + String(now.getHours()).padStart(2, '0') +
+    ':' + String(now.getMinutes()).padStart(2, '0');
+  const [name, setName] = useState(`${usps} tuned ${stamp}`);
+  const [saved, setSaved] = useState(false);
+  const qc = useQueryClient();
+
+  const save = useMutation({
+    mutationFn: () => api.catalogSave(usps, { name, plan_id: planId }),
+    onSuccess: () => {
+      setSaved(true);
+      qc.invalidateQueries({ queryKey: ['catalog', usps] });
+    },
+  });
+
+  return (
+    <div className="save-catalog-form">
+      <strong>💾 Save to catalog</strong>
+      <p className="muted small" style={{ margin: '4px 0 8px' }}>
+        Saves this plan under <em>{usps}</em>'s catalog. The date/time is included
+        automatically — you can edit the rest of the name.
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => { setName(e.target.value); setSaved(false); }}
+          style={{ flex: 1, padding: '6px 10px', border: '1px solid #cbd5e1', borderRadius: 4 }}
+        />
+        <button
+          onClick={() => save.mutate()}
+          disabled={save.isPending || saved || !name.trim()}
+          className="primary"
+          style={{ padding: '6px 14px', minWidth: 120 }}
+        >
+          {save.isPending ? 'Saving…' : saved ? '✓ Saved' : 'Save'}
+        </button>
+      </div>
+      {save.error && (
+        <p className="err small">{(save.error as Error).message}</p>
+      )}
+    </div>
   );
 }
