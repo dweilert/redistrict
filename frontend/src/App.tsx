@@ -13,6 +13,7 @@ import { HelpPanel } from './HelpPanel';
 import { StateDetailModal } from './StateDetailModal';
 import { UpdateBanner } from './UpdateBanner';
 import { SinglePlanView } from './SinglePlanView';
+import { ErrorBoundary } from './ErrorBoundary';
 import './App.css';
 
 const qc = new QueryClient({
@@ -56,32 +57,34 @@ function NationwideBatch() {
         <UpdateBanner />
       </header>
       <main>
-        {mode === 'single' ? (
-          <SinglePlanView
-            initialUsps={singleSeed.usps}
-            initialUnit={singleSeed.unit}
-            initialEpsilon={singleSeed.epsilon}
-            initialChainLength={singleSeed.chainLength}
-            onBack={() => setMode('nationwide')}
-          />
-        ) : !activeBatchId ? (
-          <BatchPicker onWatch={setActiveBatchId} />
-        ) : (
-          <LiveBatchView
-            batchId={activeBatchId}
-            showDistricts={showDistricts}
-            onToggleDistricts={() => setShowDistricts((v) => !v)}
-            onUnwatch={() => setActiveBatchId(null)}
-            onStateClick={setSelectedUsps}
-            selectedUsps={selectedUsps}
-            onClosePanel={() => setSelectedUsps(null)}
-            onTuneState={(usps, unit, epsilon, chainLength) => {
-              setSingleSeed({ usps, unit, epsilon, chainLength });
-              setSelectedUsps(null);
-              setMode('single');
-            }}
-          />
-        )}
+        <ErrorBoundary>
+          {mode === 'single' ? (
+            <SinglePlanView
+              initialUsps={singleSeed.usps}
+              initialUnit={singleSeed.unit}
+              initialEpsilon={singleSeed.epsilon}
+              initialChainLength={singleSeed.chainLength}
+              onBack={() => setMode('nationwide')}
+            />
+          ) : !activeBatchId ? (
+            <BatchPicker onWatch={setActiveBatchId} />
+          ) : (
+            <LiveBatchView
+              batchId={activeBatchId}
+              showDistricts={showDistricts}
+              onToggleDistricts={() => setShowDistricts((v) => !v)}
+              onUnwatch={() => setActiveBatchId(null)}
+              onStateClick={setSelectedUsps}
+              selectedUsps={selectedUsps}
+              onClosePanel={() => setSelectedUsps(null)}
+              onTuneState={(usps, unit, epsilon, chainLength) => {
+                setSingleSeed({ usps, unit, epsilon, chainLength });
+                setSelectedUsps(null);
+                setMode('single');
+              }}
+            />
+          )}
+        </ErrorBoundary>
       </main>
     </div>
   );
@@ -391,9 +394,18 @@ function LiveBatchView(props: LiveBatchViewProps) {
         />
         <PhaseLegend />
       </div>
+      {/* Full-screen "opening" overlay shown the instant a state is clicked,
+          before the modal has any data to display. Disappears as soon as the
+          modal renders its first content. Backed by setTimeout so it always
+          shows for at least 250ms — long enough to register as feedback. */}
       {selectedUsps && (
-        <div className="opening-toast">
-          <span className="spinner" /> Opening {selectedUsps}…
+        <div className="opening-overlay">
+          <div className="opening-overlay-card">
+            <div className="opening-overlay-spinner" />
+            <div className="opening-overlay-text">
+              Opening {selectedUsps}…
+            </div>
+          </div>
         </div>
       )}
 

@@ -117,14 +117,15 @@ export function DistrictMap({
         );
       })}
 
-      {/* Overlay layer (e.g. official current districts) */}
+      {/* Overlay layer (e.g. official current districts).
+          White fill at the chosen opacity so the underlying generated colors
+          fade evenly behind it; dashed black outlines on top mark the
+          boundaries clearly. */}
       {overlayOpacity > 0 && overlayFC && overlayFC.features.map((f, i) => {
         const d = pathGen(f) ?? '';
-        const od = (f.properties as { district?: number } | null)?.district ?? i;
-        const fillColor = DISTRICT_PALETTE[(od + 1000) % DISTRICT_PALETTE.length];
         return (
           <g key={`overlay-${i}`} pointerEvents="none">
-            <path d={d} fill={fillColor} fillOpacity={0.45 * overlayOpacity}
+            <path d={d} fill="#ffffff" fillOpacity={0.85 * overlayOpacity}
                   stroke="none" />
             <path d={d} fill="none" stroke="#0f172a" strokeWidth={2}
                   strokeDasharray="6 4" opacity={overlayOpacity} />
