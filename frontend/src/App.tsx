@@ -36,6 +36,14 @@ function NationwideBatch() {
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [showDistricts, setShowDistricts] = useState(true);
   const [selectedUsps, setSelectedUsps] = useState<string | null>(null);
+  // Brief click-feedback overlay (auto-dismisses after 600ms so the modal can
+  // show through). Set the moment a state is clicked.
+  const [openingUsps, setOpeningUsps] = useState<string | null>(null);
+  function handleStateClick(usps: string) {
+    setOpeningUsps(usps);
+    setSelectedUsps(usps);
+    window.setTimeout(() => setOpeningUsps(null), 600);
+  }
 
   return (
     <div className="layout">
@@ -74,7 +82,7 @@ function NationwideBatch() {
               showDistricts={showDistricts}
               onToggleDistricts={() => setShowDistricts((v) => !v)}
               onUnwatch={() => setActiveBatchId(null)}
-              onStateClick={setSelectedUsps}
+              onStateClick={handleStateClick}
               selectedUsps={selectedUsps}
               onClosePanel={() => setSelectedUsps(null)}
               onTuneState={(usps, unit, epsilon, chainLength) => {
@@ -394,16 +402,14 @@ function LiveBatchView(props: LiveBatchViewProps) {
         />
         <PhaseLegend />
       </div>
-      {/* Full-screen "opening" overlay shown the instant a state is clicked,
-          before the modal has any data to display. Disappears as soon as the
-          modal renders its first content. Backed by setTimeout so it always
-          shows for at least 250ms — long enough to register as feedback. */}
-      {selectedUsps && (
+      {/* Full-screen "opening" flash shown for ~600ms after a state click.
+          z-index above the modal so it sits ON TOP and is impossible to miss. */}
+      {openingUsps && (
         <div className="opening-overlay">
           <div className="opening-overlay-card">
             <div className="opening-overlay-spinner" />
             <div className="opening-overlay-text">
-              Opening {selectedUsps}…
+              Opening {openingUsps}…
             </div>
           </div>
         </div>

@@ -136,7 +136,17 @@ export function StateDetailModal({ batchId, usps, status, manifest, onTune, onCl
                 onDistrictClick={setSelectedDistrict}
               />
             ) : status?.phase === 'done' ? (
-              <div className="muted center-pad">Loading districts…</div>
+              <div className="modal-loading-card">
+                <div className="opening-overlay-spinner" />
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>
+                    Loading {fullName}…
+                  </div>
+                  <div className="muted small">
+                    Fetching district polygons + populations from the server.
+                  </div>
+                </div>
+              </div>
             ) : (
               <div className="muted center-pad">No districts to draw.</div>
             )}

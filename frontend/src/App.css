@@ -731,9 +731,19 @@ button.link-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 90;
+  /* Higher than .modal-backdrop (100) so the spinner card sits ABOVE the
+     modal while it's still loading. The modal itself has a slightly opaque
+     backdrop, so without this z-index the click feedback is hidden behind it. */
+  z-index: 200;
   pointer-events: none;
   animation: opening-in 0.12s ease-out;
+}
+/* Big in-modal loading card (when modal is open but data hasn't arrived). */
+.modal-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 60px 32px;
 }
 .opening-overlay-card {
   background: #fff;
