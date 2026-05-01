@@ -515,6 +515,30 @@ button.link-btn {
   margin-top: 12px;
 }
 
+.plan-narrative {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-left: 4px solid #16a34a;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin: 12px 0;
+}
+.plan-narrative summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #166534;
+  font-size: 14px;
+}
+.plan-narrative-body {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #1f2937;
+}
+.plan-narrative-body p {
+  margin: 0 0 8px;
+}
+
 /* Static state preview shown after dropdown selection */
 .state-preview {
   display: flex;
@@ -609,11 +633,12 @@ button.link-btn {
   50% { filter: drop-shadow(0 0 14px rgba(96, 165, 250, 0.85)); }
 }
 .evolving-district {
-  animation: evolve-fade 0.5s ease-out;
+  animation: evolve-fade 0.9s ease-out;
 }
 @keyframes evolve-fade {
-  from { opacity: 0.6; }
-  to { opacity: 1; }
+  0%   { opacity: 0; }
+  35%  { opacity: 0.55; }
+  100% { opacity: 1; }
 }
 .single-plan-mapwrap.live-preview svg {
   /* Subtle pulse on the live svg so the user sees it's "alive" */

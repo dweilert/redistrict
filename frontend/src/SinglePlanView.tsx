@@ -15,6 +15,7 @@ import { DistrictMap, DISTRICT_PALETTE } from './DistrictMap';
 import { CitiesPanel } from './CitiesPanel';
 import { SinglePlanHelp } from './SinglePlanHelp';
 import { LiveStatePreview } from './LiveStatePreview';
+import { PlanNarrative } from './PlanNarrative';
 
 const STATE_NAMES: Record<string, string> = {
   AL: 'Alabama', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
@@ -295,18 +296,25 @@ function SinglePlanRunner({ planId, usps, chainLength }: { planId: string; usps:
         <span className="muted small">plan {planId}</span>
       </div>
 
-      {phase !== 'done' && phase !== 'failed' && status.data && (
-        <LiveStatePreview
-          planId={planId}
-          usps={usps}
-          step={status.data.step}
-          chainLength={chainLength}
-          bestMaxDev={status.data.best_max_dev_pct}
-          bestPP={status.data.best_polsby_popper_mean}
-          hasFirstBest={status.data.best_score !== null && status.data.best_score !== undefined}
-          isRunning={isRunning}
-        />
-      )}
+      {/* Keep the live preview visible while the chain runs AND while the final
+          result+districts queries are loading after 'done' — avoids a blank
+          flash between the live and final views. */}
+      {phase !== 'failed' &&
+        status.data &&
+        (!isDone || !districts.data || !result.data) && (
+          <LiveStatePreview
+            planId={planId}
+            usps={usps}
+            step={status.data.step}
+            chainLength={chainLength}
+            bestMaxDev={status.data.best_max_dev_pct}
+            bestPP={status.data.best_polsby_popper_mean}
+            hasFirstBest={
+              status.data.best_score !== null && status.data.best_score !== undefined
+            }
+            isRunning={isRunning}
+          />
+        )}
 
       {phase === 'failed' && (
         <div className="failure-block">
@@ -321,6 +329,7 @@ function SinglePlanRunner({ planId, usps, chainLength }: { planId: string; usps:
           districts={districts.data}
           scorecard={result.data.scorecard}
           nDistricts={result.data.n_districts}
+          plan={result.data}
         />
       )}
     </>
@@ -349,11 +358,17 @@ interface ResultProps {
     }>;
   };
   nDistricts: number;
+  plan: {
+    seed_strategy: string;
+    epsilon: number;
+    chain_length: number;
+    weights: Record<string, number>;
+  };
 }
 
 type ViewMode = 'generated' | 'overlay' | 'current';
 
-function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts }: ResultProps) {
+function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts, plan }: ResultProps) {
   const [showLabels, setShowLabels] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('generated');
   const [overlayOpacity, setOverlayOpacity] = useState(50);
@@ -397,6 +412,16 @@ function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts }
         <span>County splits: <strong>{scorecard.county_splits}</strong></span>
         <span>Districts: <strong>{nDistricts}</strong></span>
       </div>
+
+      <PlanNarrative
+        stateName={STATE_NAMES[usps] ?? usps}
+        nDistricts={nDistricts}
+        epsilon={plan.epsilon}
+        chainLength={plan.chain_length}
+        seedStrategy={plan.seed_strategy}
+        weights={plan.weights}
+        scorecard={scorecard}
+      />
 
       <div className="view-mode-tabs" role="tablist">
         <button

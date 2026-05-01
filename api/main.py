@@ -351,23 +351,29 @@ def create_single_plan(req: SinglePlanRequest):
             g = graph_mod.build_graph(req.usps, unit=req.unit)
             _SINGLE_PLANS[plan_id]["phase"] = "districting"
 
+            # Snapshot the current partition every PREVIEW_STRIDE steps so the live
+            # preview keeps changing visibly even when the chain isn't finding new
+            # bests. (ReCom only improves the best every N proposals; without these
+            # interim snapshots the preview map looks frozen for long stretches.)
+            PREVIEW_STRIDE = 25
             best = {"score": float("inf")}
             def _cb(partition, sc):
-                _SINGLE_PLANS[plan_id]["step"] += 1
-                if sc.score < best["score"]:
+                step = _SINGLE_PLANS[plan_id]["step"] + 1
+                _SINGLE_PLANS[plan_id]["step"] = step
+                is_new_best = sc.score < best["score"]
+                if is_new_best:
                     best["score"] = sc.score
                     _SINGLE_PLANS[plan_id]["best_score"] = float(sc.score)
                     _SINGLE_PLANS[plan_id]["best_max_dev_pct"] = float(sc.max_abs_deviation_pct)
                     _SINGLE_PLANS[plan_id]["best_polsby_popper_mean"] = float(sc.polsby_popper_mean)
-                    # Capture the current best assignment so the frontend can
-                    # poll /preview-districts.geojson while the chain runs.
+                # Update the preview snapshot if this is a new best, on a stride
+                # tick, or on the very first step (so the user sees something fast).
+                if is_new_best or step == 1 or step % PREVIEW_STRIDE == 0:
                     _SINGLE_PLANS[plan_id]["best_assignment"] = {
                         partition.graph.nodes[n]["GEOID"]: int(partition.assignment[n])
                         for n in partition.graph.nodes
                     }
-                    _SINGLE_PLANS[plan_id]["preview_step"] = (
-                        _SINGLE_PLANS[plan_id]["step"]
-                    )
+                    _SINGLE_PLANS[plan_id]["preview_step"] = step
 
             plan = engine.generate_plan(
                 g, n_districts=seats,
