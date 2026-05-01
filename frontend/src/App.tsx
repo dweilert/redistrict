@@ -94,6 +94,19 @@ function NationwideBatch() {
           )}
         </ErrorBoundary>
       </main>
+
+      {/* Full-screen 'Opening <state>…' flash; auto-dismisses after 600ms.
+          Lives at the top level so it's always above any modal that opens. */}
+      {openingUsps && (
+        <div className="opening-overlay">
+          <div className="opening-overlay-card">
+            <div className="opening-overlay-spinner" />
+            <div className="opening-overlay-text">
+              Opening {openingUsps}…
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -402,19 +415,6 @@ function LiveBatchView(props: LiveBatchViewProps) {
         />
         <PhaseLegend />
       </div>
-      {/* Full-screen "opening" flash shown for ~600ms after a state click.
-          z-index above the modal so it sits ON TOP and is impossible to miss. */}
-      {openingUsps && (
-        <div className="opening-overlay">
-          <div className="opening-overlay-card">
-            <div className="opening-overlay-spinner" />
-            <div className="opening-overlay-text">
-              Opening {openingUsps}…
-            </div>
-          </div>
-        </div>
-      )}
-
       {counterModal && (
         <CounterModal
           kind={counterModal}
