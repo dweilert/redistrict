@@ -126,6 +126,45 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
   );
   const pathGen = useMemo(() => geoPath(projection), [projection]);
 
+  // ---- Heavy path strings memoized ONCE per (projection × geojson) ----
+  // d3-geo's path generator is called once per feature here; we keep the
+  // resulting SVG `d` strings in a Map so the render loop is just a string
+  // lookup. Without this, every re-render (TanStack poll, modal open, etc.)
+  // rebuilt 400+ path strings on the main thread, causing 1.2s long tasks.
+  const stateOutlinePaths = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of statesQuery.data?.features ?? []) {
+      const usps = (f.properties as { usps?: string } | null)?.usps;
+      if (usps) m.set(usps, pathGen(f) ?? '');
+    }
+    return m;
+  }, [statesQuery.data, pathGen]);
+
+  const stateCentroids = useMemo(() => {
+    const m = new Map<string, [number, number]>();
+    for (const f of statesQuery.data?.features ?? []) {
+      const usps = (f.properties as { usps?: string } | null)?.usps;
+      if (usps) m.set(usps, pathGen.centroid(f) as [number, number]);
+    }
+    return m;
+  }, [statesQuery.data, pathGen]);
+
+  // For each done state, pre-render its district path strings.
+  const districtPathsByUsps = useMemo(() => {
+    const out = new Map<string, Array<{ d: string; districtId: number }>>();
+    for (const [usps, fc] of Object.entries(districtsByUsps)) {
+      out.set(
+        usps,
+        fc.features.map((df, i) => ({
+          d: pathGen(df) ?? '',
+          districtId:
+            (df.properties as { district?: number } | null)?.district ?? i,
+        })),
+      );
+    }
+    return out;
+  }, [districtsByUsps, pathGen]);
+
   if (!statesQuery.data) {
     return (
       <div ref={containerRef} className="us-map-loading">
@@ -191,13 +230,13 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
           const usps = (feature.properties as { usps?: string } | null)?.usps;
           if (!usps) return null;
           const phase = phaseByUsps[usps] ?? 'queued';
-          const districtFC = districtsByUsps[usps];
+          const districtPaths = districtPathsByUsps.get(usps);
 
-          const stateOutlinePath = pathGen(feature) ?? '';
-          // Center for label
-          const centroid = pathGen.centroid(feature);
+          const stateOutlinePath = stateOutlinePaths.get(usps) ?? '';
+          const centroid = stateCentroids.get(usps) ?? [0, 0];
 
-          const showRealDistricts = showDistricts && phase === 'done' && districtFC;
+          const showRealDistricts =
+            showDistricts && phase === 'done' && districtPaths && districtPaths.length > 0;
 
           return (
             <g
@@ -211,14 +250,11 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
             >
               {showRealDistricts ? (
                 <>
-                  {districtFC.features.map((df, i) => (
+                  {districtPaths!.map((dp, i) => (
                     <path
                       key={i}
-                      d={pathGen(df) ?? ''}
-                      fill={DISTRICT_PALETTE[
-                        ((df.properties as { district?: number } | null)?.district ?? i) %
-                          DISTRICT_PALETTE.length
-                      ]}
+                      d={dp.d}
+                      fill={DISTRICT_PALETTE[dp.districtId % DISTRICT_PALETTE.length]}
                       stroke="#fff"
                       strokeWidth={0.6}
                       pointerEvents="none"

@@ -60,17 +60,8 @@ function NationwideBatch() {
   const [showDistricts, setShowDistricts] = useState(true);
   const [selectedUsps, setSelectedUsps] = useState<string | null>(null);
   function handleStateClick(usps: string) {
-    // Diagnostic: log timing so we can see in the browser console exactly
-    // when the click handler ran vs when the overlay was injected. A long
-    // gap between "click event" and "overlay added" means something else
-    // (a setInterval / observer / SVG hit-test) was blocking the main
-    // thread before our handler got control.
-    const t0 = performance.now();
-    // eslint-disable-next-line no-console
-    console.log('[click]', usps, 'handler entered at', t0.toFixed(1), 'ms');
     showOpeningOverlay(usps);
-    // eslint-disable-next-line no-console
-    console.log('[click]', usps, 'overlay injected after', (performance.now() - t0).toFixed(1), 'ms');
+    // Defer the modal mount one tick so the imperative overlay paints first.
     window.setTimeout(() => setSelectedUsps(usps), 0);
   }
 
