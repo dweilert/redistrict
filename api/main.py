@@ -164,8 +164,37 @@ def state_cd119(usps: str):
         raise HTTPException(404, f"No CD119 entry for {usps}")
     gdf = gdf.copy()
     gdf["geometry"] = gdf.geometry.simplify(0.005, preserve_topology=True)
+    # Convert CD119FP to 0-indexed so DistrictMap labels render as "1, 2, 3" via
+    # the standard `did + 1` formula (matches our engine output).
+    gdf["district"] = gdf["district"].apply(
+        lambda v: int(v) - 1 if v is not None else None
+    )
+    gdf = gdf.dropna(subset=["district"])
     keep = gdf[["district", "NAMELSAD", "geometry"]].copy()
     return _gdf_to_geojson(keep)
+
+
+@app.get("/api/states/{usps}/cd119/districts/{district}/cities")
+def cd119_district_cities(usps: str, district: int):
+    """Cities/places inside one district of the official 119th-Congress plan.
+
+    The ``district`` path parameter is 0-indexed (matching our engine output);
+    we add 1 to convert back to the source CD119FP value.
+    """
+    from redistrict import cd_official, places
+    state_districts = cd_official.load_state_districts(usps)
+    target_cd = int(district) + 1
+    matching = state_districts[
+        state_districts["district"].apply(
+            lambda v: v is not None and int(v) == target_cd
+        )
+    ]
+    if len(matching) == 0:
+        raise HTTPException(404, f"No CD119 district {district} for {usps}")
+    poly = matching.geometry.iloc[0]
+    statefp = config.STATES.get(usps, {}).get("fips", "")
+    cities = places.cities_in_polygon(poly, statefp, usps)
+    return {"usps": usps, "district": int(district), "cities": cities}
 
 
 @app.get("/api/states/{usps}/cd119/scorecard")
@@ -330,6 +359,15 @@ def create_single_plan(req: SinglePlanRequest):
                     _SINGLE_PLANS[plan_id]["best_score"] = float(sc.score)
                     _SINGLE_PLANS[plan_id]["best_max_dev_pct"] = float(sc.max_abs_deviation_pct)
                     _SINGLE_PLANS[plan_id]["best_polsby_popper_mean"] = float(sc.polsby_popper_mean)
+                    # Capture the current best assignment so the frontend can
+                    # poll /preview-districts.geojson while the chain runs.
+                    _SINGLE_PLANS[plan_id]["best_assignment"] = {
+                        partition.graph.nodes[n]["GEOID"]: int(partition.assignment[n])
+                        for n in partition.graph.nodes
+                    }
+                    _SINGLE_PLANS[plan_id]["preview_step"] = (
+                        _SINGLE_PLANS[plan_id]["step"]
+                    )
 
             plan = engine.generate_plan(
                 g, n_districts=seats,
@@ -413,6 +451,58 @@ def single_plan_districts(plan_id: str):
     diss = merged.dissolve(by="district", as_index=False)[["district", "geometry"]]
     diss["geometry"] = diss.geometry.simplify(0.005, preserve_topology=True)
     return _gdf_to_geojson(diss)
+
+
+# In-memory cache of preview districts: (plan_id, preview_step) -> geojson.
+_PREVIEW_CACHE: dict[tuple[str, int], dict] = {}
+
+
+@app.get("/api/single-plan/{plan_id}/preview-districts.geojson")
+def single_plan_preview(plan_id: str):
+    """Live evolving district map for a running plan.
+
+    Reads the current best assignment captured by the chain's progress_cb,
+    dissolves units to district polygons, and returns simplified GeoJSON. The
+    result is keyed on the current preview_step so the frontend's TanStack Query
+    cache changes when (and only when) a new best plan has been found.
+    """
+    if plan_id not in _SINGLE_PLANS:
+        raise HTTPException(404, f"Unknown plan: {plan_id}")
+    s = _SINGLE_PLANS[plan_id]
+    assignment = s.get("best_assignment")
+    step = s.get("preview_step", 0)
+    if not assignment:
+        raise HTTPException(409, "No preview yet")
+    cache_key = (plan_id, step)
+    if cache_key in _PREVIEW_CACHE:
+        return _PREVIEW_CACHE[cache_key]
+
+    from redistrict import loader
+    from redistrict.graph import _aggregate_to_blockgroups
+    import pandas as pd
+
+    req = s["request"]
+    blocks = loader.load_blocks(req["usps"])
+    units_gdf = (_aggregate_to_blockgroups(blocks)
+                 if req["unit"] == "blockgroup" else blocks)
+    df = pd.DataFrame.from_dict(assignment, orient="index", columns=["district"])
+    df.index.name = "GEOID"
+    df = df.reset_index()
+    df["GEOID"] = df["GEOID"].astype(str)
+    units_gdf = units_gdf.copy()
+    units_gdf["GEOID"] = units_gdf["GEOID"].astype(str)
+    merged = units_gdf.merge(df, on="GEOID", how="inner")
+    merged["district"] = merged["district"].astype(int)
+    diss = merged.dissolve(by="district", as_index=False)[["district", "geometry"]]
+    diss["geometry"] = diss.geometry.simplify(0.01, preserve_topology=True)
+    payload = _gdf_to_geojson(diss)
+    payload["_step"] = step
+    # Keep at most a couple of preview cache entries per plan to bound memory.
+    _PREVIEW_CACHE[cache_key] = payload
+    if len(_PREVIEW_CACHE) > 16:
+        oldest = sorted(_PREVIEW_CACHE.keys(), key=lambda k: k[1])[0]
+        _PREVIEW_CACHE.pop(oldest, None)
+    return payload
 
 
 @app.get("/api/single-plan/{plan_id}/districts/{district}/cities")

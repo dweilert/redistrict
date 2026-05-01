@@ -9,10 +9,12 @@
  */
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { geoMercator, geoPath } from 'd3-geo';
 import { api } from './api';
 import { DistrictMap, DISTRICT_PALETTE } from './DistrictMap';
 import { CitiesPanel } from './CitiesPanel';
 import { SinglePlanHelp } from './SinglePlanHelp';
+import { LiveStatePreview } from './LiveStatePreview';
 
 const STATE_NAMES: Record<string, string> = {
   AL: 'Alabama', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
@@ -184,21 +186,63 @@ export function SinglePlanView(props: Props) {
         )}
       </section>
 
-      {/* RIGHT: live progress + result */}
+      {/* RIGHT: state preview / live progress / result */}
       <section className="card single-plan-result">
         {!planId ? (
-          <div className="muted center-pad">
-            <p>Pick a state, set weights, and click <strong>Generate plan</strong>.</p>
-            <p className="small">
-              The chain runs server-side; this panel shows live progress and the
-              final district map when it finishes.
-            </p>
-          </div>
+          <StateSelectionPreview usps={usps} />
         ) : (
           <SinglePlanRunner planId={planId} usps={usps} chainLength={chainLength} />
         )}
       </section>
       </div>
+    </div>
+  );
+}
+
+/** Static preview of the picked state, shown before any plan is generated. */
+function StateSelectionPreview({ usps }: { usps: string }) {
+  const states = useQuery({
+    queryKey: ['states-geojson'],
+    queryFn: () => api.statesGeoJSON(),
+    staleTime: 60 * 60 * 1000,
+  });
+  const fullName = STATE_NAMES[usps] ?? usps;
+  const seats = STATE_SEATS[usps] ?? 0;
+
+  // Project just this state.
+  const W = 700;
+  const H = 420;
+  const fc = states.data && {
+    type: 'FeatureCollection',
+    features: states.data.features.filter(
+      (f) => (f.properties as { usps?: string } | null)?.usps === usps
+    ),
+  } as GeoJSON.FeatureCollection | undefined;
+  const projection = fc ? geoMercator().fitSize([W, H], fc) : null;
+  const pathGen = projection ? geoPath(projection) : null;
+
+  return (
+    <div className="state-preview">
+      <div className="state-preview-header">
+        <h3 style={{ margin: 0 }}>{fullName}</h3>
+        <span className="muted">({usps})</span>
+        <span className="state-seats-pill">{seats} U.S. House seats</span>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="state-preview-svg">
+        {fc && pathGen && fc.features.map((f, i) => (
+          <path
+            key={i}
+            d={pathGen(f) ?? ''}
+            fill="#cbd5e1"
+            stroke="#1e293b"
+            strokeWidth={1.5}
+          />
+        ))}
+      </svg>
+      <p className="muted small" style={{ marginTop: 8 }}>
+        Set ε / chain length / weights on the left, then click{' '}
+        <strong>Generate plan</strong> to start the engine.
+      </p>
     </div>
   );
 }
@@ -215,6 +259,7 @@ function SinglePlanRunner({ planId, usps, chainLength }: { planId: string; usps:
   });
 
   const isDone = status.data?.phase === 'done';
+  const isRunning = status.data?.phase === 'districting' || status.data?.phase === 'loading' || status.data?.phase === 'graph';
 
   const result = useQuery({
     queryKey: ['single-result', planId],
@@ -240,33 +285,16 @@ function SinglePlanRunner({ planId, usps, chainLength }: { planId: string; usps:
       </div>
 
       {phase !== 'done' && phase !== 'failed' && status.data && (
-        <div className="single-progress">
-          <div className="progress-bar">
-            <div
-              className="progress-bar-fill"
-              style={{
-                width: `${Math.min(100, (status.data.step / chainLength) * 100)}%`,
-              }}
-            />
-          </div>
-          <div className="single-progress-stats">
-            <span>
-              Step <strong>{status.data.step}</strong> / {chainLength}
-            </span>
-            {status.data.best_max_dev_pct !== null && (
-              <span>
-                best max |dev|:{' '}
-                <strong>{status.data.best_max_dev_pct?.toFixed(4)}%</strong>
-              </span>
-            )}
-            {status.data.best_polsby_popper_mean !== null && (
-              <span>
-                best PP mean:{' '}
-                <strong>{status.data.best_polsby_popper_mean?.toFixed(3)}</strong>
-              </span>
-            )}
-          </div>
-        </div>
+        <LiveStatePreview
+          planId={planId}
+          usps={usps}
+          step={status.data.step}
+          chainLength={chainLength}
+          bestMaxDev={status.data.best_max_dev_pct}
+          bestPP={status.data.best_polsby_popper_mean}
+          hasFirstBest={status.data.best_score !== null && status.data.best_score !== undefined}
+          isRunning={isRunning}
+        />
       )}
 
       {phase === 'failed' && (
@@ -312,25 +340,42 @@ interface ResultProps {
   nDistricts: number;
 }
 
+type ViewMode = 'generated' | 'overlay' | 'current';
+
 function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts }: ResultProps) {
   const [showLabels, setShowLabels] = useState(true);
-  const [overlayOpacity, setOverlayOpacity] = useState(0);
+  const [viewMode, setViewMode] = useState<ViewMode>('generated');
+  const [overlayOpacity, setOverlayOpacity] = useState(50);
   const [selectedDistrict, setSelectedDistrict] = useState<number | null>(null);
 
+  // Current districts always loaded eagerly so the toggle is instant.
   const officialQuery = useQuery({
     queryKey: ['cd119', usps],
     queryFn: () => api.stateCD119(usps),
-    enabled: overlayOpacity > 0,
     staleTime: 24 * 60 * 60 * 1000,
     retry: false,
   });
   const officialScorecardQuery = useQuery({
     queryKey: ['cd119-scorecard', usps],
     queryFn: () => api.stateCD119Scorecard(usps),
-    enabled: overlayOpacity > 0,
     staleTime: 24 * 60 * 60 * 1000,
     retry: false,
   });
+
+  // Reset selection when view mode changes — district numbering comes from a
+  // different source.
+  function changeView(m: ViewMode) {
+    setViewMode(m);
+    setSelectedDistrict(null);
+  }
+
+  // Determine what the primary (interactive) FC is and what the overlay is.
+  const primaryFC = viewMode === 'current' ? officialQuery.data : districts;
+  const overlayFC =
+    viewMode === 'overlay'
+      ? officialQuery.data
+      : undefined;
+  const effectiveOverlayOpacity = viewMode === 'overlay' ? overlayOpacity / 100 : 0;
 
   return (
     <>
@@ -342,6 +387,32 @@ function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts }
         <span>Districts: <strong>{nDistricts}</strong></span>
       </div>
 
+      <div className="view-mode-tabs" role="tablist">
+        <button
+          className={viewMode === 'generated' ? 'active' : ''}
+          onClick={() => changeView('generated')}
+          title="The plan you just generated."
+        >
+          Generated
+        </button>
+        <button
+          className={viewMode === 'overlay' ? 'active' : ''}
+          onClick={() => changeView('overlay')}
+          title="Generated plan with the official current districts overlaid (drag the slider to fade)."
+          disabled={!officialQuery.data}
+        >
+          Both (overlay)
+        </button>
+        <button
+          className={viewMode === 'current' ? 'active' : ''}
+          onClick={() => changeView('current')}
+          title="The state's officially-adopted current 119th-Congress districts."
+          disabled={!officialQuery.data}
+        >
+          Current 119th
+        </button>
+      </div>
+
       <div className="single-plan-mapwrap">
         <div className="state-map-toolbar">
           <label className="checkbox">
@@ -350,30 +421,44 @@ function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts }
             Show district numbers
           </label>
         </div>
-        <div className="overlay-toggle">
-          <span title="Overlays the state's officially-adopted current U.S. House districts.">
-            Current US House districts
-          </span>
-          <input type="range" min={0} max={100} step={5} value={overlayOpacity}
-                 onChange={(e) => setOverlayOpacity(parseInt(e.target.value))} />
-          <span className="muted small" style={{ minWidth: 36 }}>{overlayOpacity}%</span>
-        </div>
-        <DistrictMap
-          fc={districts}
-          overlayFC={officialQuery.data}
-          overlayOpacity={overlayOpacity / 100}
-          showLabels={showLabels}
-          selectedDistrict={selectedDistrict}
-          onDistrictClick={setSelectedDistrict}
-          className="single-plan-svg"
-        />
+        {viewMode === 'overlay' && (
+          <div className="overlay-toggle">
+            <span title="Opacity of the official-current overlay. 0% = generated only; 100% = current districts on top.">
+              Current overlay
+            </span>
+            <input type="range" min={0} max={100} step={5} value={overlayOpacity}
+                   onChange={(e) => setOverlayOpacity(parseInt(e.target.value))} />
+            <span className="muted small" style={{ minWidth: 36 }}>{overlayOpacity}%</span>
+          </div>
+        )}
+        {primaryFC ? (
+          <DistrictMap
+            fc={primaryFC}
+            overlayFC={overlayFC}
+            overlayOpacity={effectiveOverlayOpacity}
+            showLabels={showLabels}
+            selectedDistrict={selectedDistrict}
+            onDistrictClick={setSelectedDistrict}
+            className="single-plan-svg"
+          />
+        ) : (
+          <div className="muted center-pad">Loading…</div>
+        )}
       </div>
 
-      {selectedDistrict !== null && (
+      {selectedDistrict !== null && viewMode !== 'current' && (
         <CitiesPanel
           district={selectedDistrict}
           queryKey={['single-plan-cities', planId, String(selectedDistrict)]}
           fetcher={() => api.singlePlanCities(planId, selectedDistrict)}
+          onClose={() => setSelectedDistrict(null)}
+        />
+      )}
+      {selectedDistrict !== null && viewMode === 'current' && (
+        <CitiesPanel
+          district={selectedDistrict}
+          queryKey={['cd119-cities', usps, String(selectedDistrict)]}
+          fetcher={() => api.stateCD119DistrictCities(usps, selectedDistrict)}
           onClose={() => setSelectedDistrict(null)}
         />
       )}

@@ -96,6 +96,12 @@ export const api = {
         area_sqmi: number;
       }>;
     }>(`/api/batches/${batchId}/states/${usps}/districts/${district}/cities`),
+  stateCD119DistrictCities: (usps: string, district: number) =>
+    get<{
+      usps: string;
+      district: number;
+      cities: Array<{ name: string; kind: string; population: number; area_sqmi: number }>;
+    }>(`/api/states/${usps}/cd119/districts/${district}/cities`),
   stateCD119: (usps: string) =>
     get<GeoJSON.FeatureCollection>(`/api/states/${usps}/cd119.geojson`),
   stateCD119Scorecard: (usps: string) =>
@@ -202,6 +208,10 @@ export const api = {
         }>;
       };
     }>(`/api/single-plan/${id}/result`),
+  singlePlanPreview: (id: string) =>
+    get<GeoJSON.FeatureCollection & { _step?: number }>(
+      `/api/single-plan/${id}/preview-districts.geojson`
+    ),
   singlePlanCities: (id: string, district: number) =>
     get<{
       plan_id: string;

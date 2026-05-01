@@ -449,6 +449,32 @@ button.link-btn {
 .modal-state-map { position: relative; }
 
 /* Opening-toast: confirms a state click was registered while modal data loads */
+.view-mode-tabs {
+  display: inline-flex;
+  gap: 0;
+  margin: 8px 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.view-mode-tabs button {
+  padding: 6px 14px;
+  font-size: 13px;
+  border: none;
+  border-right: 1px solid #cbd5e1;
+  border-radius: 0;
+  background: #f8fafc;
+}
+.view-mode-tabs button:last-child { border-right: none; }
+.view-mode-tabs button.active {
+  background: #2563eb;
+  color: #fff;
+}
+.view-mode-tabs button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .mode-tabs {
   display: flex;
   gap: 4px;
@@ -484,6 +510,155 @@ button.link-btn {
 }
 .single-plan-mapwrap {
   position: relative;
+}
+.single-plan-mapwrap.live-preview {
+  margin-top: 12px;
+}
+
+/* Static state preview shown after dropdown selection */
+.state-preview {
+  display: flex;
+  flex-direction: column;
+}
+.state-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.state-seats-pill {
+  margin-left: auto;
+  background: #e0e7ff;
+  color: #1e3a8a;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.state-preview-svg {
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+/* Live preview card during chain run — light theme */
+.live-preview-card {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 12px;
+}
+.live-svg {
+  display: block;
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+.live-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.chip {
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.chip-state {
+  background: #1e293b;
+  color: #fff;
+  font-size: 14px;
+}
+.chip-step {
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+.chip-metric {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+.live-progressbar {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+.live-progressbar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  transition: width 0.3s ease;
+}
+.live-status-line {
+  color: #475569;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.outline-pulse {
+  animation: outline-glow 2.4s ease-in-out infinite;
+}
+@keyframes outline-glow {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.5)); }
+  50% { filter: drop-shadow(0 0 14px rgba(96, 165, 250, 0.85)); }
+}
+.evolving-district {
+  animation: evolve-fade 0.5s ease-out;
+}
+@keyframes evolve-fade {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
+}
+.single-plan-mapwrap.live-preview svg {
+  /* Subtle pulse on the live svg so the user sees it's "alive" */
+  animation: live-pulse 3.5s ease-in-out infinite;
+}
+.live-badge {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 3;
+  background: #2563eb;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.live-badge .spinner {
+  width: 12px; height: 12px; border-width: 2px;
+}
+.live-shimmer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 20px;
+  color: #1e40af;
+  font-size: 14px;
+  font-weight: 500;
+}
+.live-shimmer .spinner {
+  width: 22px; height: 22px;
+  border-color: rgba(37, 99, 235, 0.3);
+  border-top-color: #2563eb;
+}
+@keyframes shimmer-bg {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.92; }
 }
 .single-plan-wrapper {
   display: flex;
