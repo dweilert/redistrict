@@ -57,9 +57,7 @@ function NationwideBatch() {
   const [mode, setMode] = useState<'nationwide' | 'single'>('nationwide');
   const [singleSeed, setSingleSeed] = useState<{ usps?: string; unit?: string; epsilon?: number; chainLength?: number }>({});
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
-  // Default OFF: rendering 44 parallel district choropleths blocks the main
-  // thread for seconds and makes state clicks feel laggy. User can opt in.
-  const [showDistricts, setShowDistricts] = useState(false);
+  const [showDistricts, setShowDistricts] = useState(true);
   const [selectedUsps, setSelectedUsps] = useState<string | null>(null);
   function handleStateClick(usps: string) {
     // Diagnostic: log timing so we can see in the browser console exactly

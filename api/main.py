@@ -150,6 +150,35 @@ def batch_status(batch_id: str):
 
 
 _DISTRICT_GEOJSON_CACHE: dict[tuple[str, str], dict] = {}
+_BUNDLED_DISTRICTS_CACHE: dict[str, dict] = {}
+
+
+@app.get("/api/batches/{batch_id}/all-districts.geojson")
+def all_districts_geojson(batch_id: str):
+    """Single bundled GeoJSON of every done state's districts.
+
+    Replaces 44 parallel per-state fetches that were locking up the main
+    thread when the nationwide live map turned on district choropleths.
+    Each feature carries `usps` and `district` properties.
+    """
+    if batch_id in _BUNDLED_DISTRICTS_CACHE:
+        return _BUNDLED_DISTRICTS_CACHE[batch_id]
+    bd = batch_mod.batch_dir(batch_id)
+    if not bd.exists():
+        raise HTTPException(404, f"Batch {batch_id} not found")
+    features: list[dict] = []
+    for gpkg in sorted(bd.glob("*_districts.gpkg")):
+        usps = gpkg.name.split("_")[0]
+        try:
+            gdf = gpd.read_file(gpkg)
+            gdf["geometry"] = gdf.geometry.simplify(0.01, preserve_topology=True)
+            gdf["usps"] = usps
+            features.extend(json.loads(gdf.to_json())["features"])
+        except Exception:
+            continue
+    payload = {"type": "FeatureCollection", "features": features}
+    _BUNDLED_DISTRICTS_CACHE[batch_id] = payload
+    return payload
 
 
 @app.get("/api/states/{usps}/cd119.geojson")

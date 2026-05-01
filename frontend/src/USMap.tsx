@@ -9,7 +9,7 @@
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { geoAlbersUsa, geoPath } from 'd3-geo';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api, type StateStatus } from './api';
 
 export const PHASE_COLORS: Record<string, string> = {
@@ -89,35 +89,28 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
     staleTime: 60 * 60 * 1000,
   });
 
-  // Districts per "done" state — fetched in parallel, cached, only when showDistricts.
-  const doneStates = useMemo(
-    () => statuses.filter((s) => s.phase === 'done').map((s) => s.usps),
-    [statuses]
-  );
-
-  // Only kick off the parallel district fetches when the user has actually
-  // asked to see them. Keeping 44 disabled-but-still-instantiated queries on
-  // the page was tying up the main thread (each is a query observer that
-  // wakes on cache events) and made every interaction feel laggy.
-  const districtQueries = useQueries({
-    queries: showDistricts
-      ? doneStates.map((usps) => ({
-          queryKey: ['districts', batchId, usps],
-          queryFn: () => api.stateDistricts(batchId, usps),
-          staleTime: 60 * 60 * 1000,
-          retry: false,
-        }))
-      : [],
+  // SINGLE bundled fetch of every done state's districts (replaces 44 parallel
+  // per-state fetches that were stalling the main thread for seconds).
+  const allDistricts = useQuery({
+    queryKey: ['all-districts', batchId],
+    queryFn: () => api.allDistricts(batchId),
+    enabled: showDistricts,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
   });
 
+  // Group features by usps once — memoized so we don't repeat on every render.
   const districtsByUsps = useMemo(() => {
     const m: Record<string, GeoJSON.FeatureCollection> = {};
-    doneStates.forEach((usps, i) => {
-      const q = districtQueries[i];
-      if (q?.data) m[usps] = q.data;
-    });
+    if (!allDistricts.data) return m;
+    for (const f of allDistricts.data.features) {
+      const usps = (f.properties as { usps?: string } | null)?.usps;
+      if (!usps) continue;
+      if (!m[usps]) m[usps] = { type: 'FeatureCollection', features: [] };
+      m[usps].features.push(f);
+    }
     return m;
-  }, [doneStates, districtQueries]);
+  }, [allDistricts.data]);
 
   const phaseByUsps = useMemo(() => {
     const m: Record<string, string> = {};

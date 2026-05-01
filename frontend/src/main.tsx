@@ -19,7 +19,9 @@ if ('PerformanceObserver' in window) {
         }
       }
     });
-    observer.observe({ type: 'longtask', buffered: true });
+    // buffered: false so we only see *new* long tasks, not replays from
+    // previous HMR cycles which get re-broadcast on subscribe.
+    observer.observe({ type: 'longtask', buffered: false });
   } catch {
     /* longtask isn't supported in all browsers — fine to ignore */
   }

@@ -85,6 +85,8 @@ export const api = {
   statesGeoJSON: () => get<GeoJSON.FeatureCollection>('/api/states.geojson'),
   stateDistricts: (batchId: string, usps: string) =>
     get<GeoJSON.FeatureCollection>(`/api/batches/${batchId}/states/${usps}/districts.geojson`),
+  allDistricts: (batchId: string) =>
+    get<GeoJSON.FeatureCollection>(`/api/batches/${batchId}/all-districts.geojson`),
   districtCities: (batchId: string, usps: string, district: number) =>
     get<{
       usps: string;
