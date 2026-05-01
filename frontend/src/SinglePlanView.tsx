@@ -109,6 +109,25 @@ export function SinglePlanView(props: Props) {
   });
 
   const [leftTab, setLeftTab] = useState<'tune' | 'view'>('tune');
+  const [viewedPlanUuid, setViewedPlanUuid] = useState<string>('census-current');
+
+  // Catalog districts for the View tab — fetched once per (state, uuid).
+  const viewedDistricts = useQuery({
+    queryKey: ['catalog-districts', usps, viewedPlanUuid],
+    queryFn: () => api.catalogDistricts(usps, viewedPlanUuid),
+    enabled: leftTab === 'view',
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
+  const viewedEntries = useQuery({
+    queryKey: ['catalog', usps],
+    queryFn: () => api.catalogList(usps),
+    enabled: leftTab === 'view',
+    staleTime: 30_000,
+  });
+  const viewedEntry = viewedEntries.data?.entries.find(
+    (e) => e.plan_uuid === viewedPlanUuid,
+  );
 
   return (
     <div className="single-plan-wrapper">
@@ -162,7 +181,11 @@ export function SinglePlanView(props: Props) {
                 ))}
             </select>
           </label>
-          <CatalogPanel usps={usps} selectedPlanUuid={null} onSelect={() => {}} />
+          <CatalogPanel
+            usps={usps}
+            selectedPlanUuid={viewedPlanUuid}
+            onSelect={(uuid) => setViewedPlanUuid(uuid)}
+          />
         </>
       ) : (
         <>
@@ -244,9 +267,17 @@ export function SinglePlanView(props: Props) {
       )}
       </section>
 
-      {/* RIGHT: state preview / live progress / result */}
+      {/* RIGHT: state preview / live progress / result / catalog viewer */}
       <section className="card single-plan-result">
-        {!planId ? (
+        {leftTab === 'view' ? (
+          <CatalogViewerRight
+            usps={usps}
+            entry={viewedEntry}
+            districts={viewedDistricts.data}
+            isLoading={viewedDistricts.isLoading}
+            error={viewedDistricts.error as Error | null}
+          />
+        ) : !planId ? (
           <StateSelectionPreview usps={usps} />
         ) : (
           <SinglePlanRunner planId={planId} usps={usps} chainLength={chainLength} />
@@ -256,6 +287,77 @@ export function SinglePlanView(props: Props) {
     </div>
   );
 }
+
+/** Right-side viewer when the View / Catalog tab is active. Shows the
+ *  selected catalog entry's districts + a small scorecard. */
+function CatalogViewerRight({
+  usps,
+  entry,
+  districts,
+  isLoading,
+  error,
+}: {
+  usps: string;
+  entry: { name: string; source: string; scorecard: Record<string, unknown> } | undefined;
+  districts: GeoJSON.FeatureCollection | undefined;
+  isLoading: boolean;
+  error: Error | null;
+}) {
+  const fullName = STATE_NAMES[usps] ?? usps;
+  const sc = (entry?.scorecard ?? {}) as {
+    available?: boolean;
+    max_abs_deviation_pct?: number;
+    polsby_popper_mean?: number;
+    county_splits?: number;
+    total_population?: number;
+  };
+
+  return (
+    <>
+      <div className="batch-line" style={{ marginBottom: 8 }}>
+        <strong>{fullName}</strong>{' '}
+        <span className="muted">({usps})</span>{' '}
+        {entry && (
+          <span className={`catalog-source-badge src-${entry.source}`}>
+            {entry.source === 'census' ? '🇺🇸 Census' :
+              entry.source === 'nationwide' ? '🌐 Nationwide' :
+              '🔧 Tuned'}
+          </span>
+        )}
+        {entry && <span className="muted small">{entry.name}</span>}
+      </div>
+
+      {entry && (
+        <div className="single-stats">
+          {sc.total_population !== undefined &&
+            <span>Total pop: <strong>{sc.total_population.toLocaleString()}</strong></span>}
+          {sc.max_abs_deviation_pct !== undefined &&
+            <span>Max |dev|: <strong>{sc.max_abs_deviation_pct.toFixed(4)}%</strong></span>}
+          {sc.polsby_popper_mean !== undefined &&
+            <span>PP: <strong>{sc.polsby_popper_mean.toFixed(3)}</strong></span>}
+          {sc.county_splits !== undefined &&
+            <span>Splits: <strong>{sc.county_splits}</strong></span>}
+        </div>
+      )}
+
+      {isLoading && <div className="muted center-pad">Loading districts…</div>}
+      {error && <div className="failure-block">Could not load districts: {error.message}</div>}
+      {districts && (
+        <DistrictMap
+          fc={districts}
+          showLabels={true}
+          className="single-plan-svg"
+        />
+      )}
+      {!districts && !isLoading && !error && (
+        <div className="muted center-pad">
+          Pick a catalog entry on the left to view its districts here.
+        </div>
+      )}
+    </>
+  );
+}
+
 
 /** Static preview of the picked state, shown before any plan is generated. */
 function StateSelectionPreview({ usps }: { usps: string }) {

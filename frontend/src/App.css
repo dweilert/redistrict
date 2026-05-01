@@ -889,6 +889,59 @@ button.link-btn {
 .catalog-row-actions button.active { background: #2563eb; color: #fff; border-color: #1d4ed8; }
 .catalog-row-actions button.danger { color: #b91c1c; border-color: #fca5a5; }
 
+/* Help-as-modal */
+.help-button {
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+.help-button:hover { background: #fde68a; }
+
+.modal-help {
+  max-width: 720px;
+  width: 95%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.modal-help .modal-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.modal-help-body {
+  padding: 16px 22px 22px;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.modal-help-body .help-section { margin-bottom: 18px; }
+.modal-help-body h3 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 4px;
+}
+.modal-help-body h3:first-child { margin-top: 0; }
+.modal-help-body dl { margin: 6px 0 12px; }
+.modal-help-body dt { font-weight: 600; margin-top: 8px; }
+.modal-help-body dd { margin: 2px 0 6px 16px; color: #334155; }
+.modal-help-body ul { padding-left: 18px; }
+.modal-help-body .kbd {
+  display: inline-block;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
 .left-card-tabs {
   display: inline-flex;
   border: 1px solid #cbd5e1;

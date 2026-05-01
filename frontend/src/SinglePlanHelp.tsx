@@ -1,10 +1,38 @@
 /** Plain-English glossary for the single-state Generate Plan view.
- *  Mirrors HelpPanel.tsx but trimmed to single-state context. */
+ *  Renders as a small button; click opens a centered modal so the (long)
+ *  glossary doesn't push the engine controls off-screen the way an inline
+ *  <details> expander did. */
+import { useState } from 'react';
+
 export function SinglePlanHelp() {
+  const [open, setOpen] = useState(false);
   return (
-    <details className="help-panel">
-      <summary>📖 What do these controls mean? (click to open)</summary>
-      <div className="help-body">
+    <>
+      <button
+        type="button"
+        className="help-button"
+        onClick={() => setOpen(true)}
+        title="Open the glossary in a popup"
+      >
+        📖 What do these controls mean?
+      </button>
+      {open && (
+        <div className="modal-backdrop" onClick={() => setOpen(false)}>
+          <div
+            className="modal modal-help"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2>What do these controls mean?</h2>
+              <button
+                className="modal-close"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-help-body">
 
         <section className="help-section">
           <h3>The 30-second version</h3>
@@ -113,7 +141,10 @@ export function SinglePlanHelp() {
           </ul>
         </section>
 
-      </div>
-    </details>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

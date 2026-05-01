@@ -60,9 +60,16 @@ function USMapImpl({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [{ width, height }, setSize] = useState({ width: 1100, height: 660 });
-  // Zoom + pan state (transform on an inner <g>).
+  // Zoom + pan state (transform on an inner <g>). Mirrored into refs so the
+  // wheel handler can read the *current* values (inside React's setState
+  // callbacks, the captured closure values lag by one render and the cursor
+  // anchor math drifted, making the map feel like it was recentering).
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { panRef.current = pan; }, [pan]);
   const [drag, setDrag] = useState<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null);
   // "Hold ⌘/Ctrl to zoom" hint, auto-clears after a couple seconds.
   const [zoomHint, setZoomHint] = useState(false);
@@ -85,23 +92,27 @@ function USMapImpl({
     setZoom(1);
     setPan({ x: 0, y: 0 });
   }
-  /** Zoom about a point so the location under (anchorX, anchorY) stays put. */
+  /** Zoom about a point so the location under (anchorX, anchorY) stays put.
+   *  Reads current zoom/pan from refs so consecutive wheel ticks see consistent
+   *  state (closure captures of useState lag by one render). */
   function zoomAt(anchorX: number, anchorY: number, factor: number) {
-    setZoom((z) => {
-      const next = Math.max(1, Math.min(8, z * factor));
-      // Solve for new pan that keeps (ax, ay) fixed under the SVG transform.
-      // The transform is: x' = pan.x + scale * x_world. We want the world
-      // point at (ax, ay) before to map to (ax, ay) after. With p_old, z_old:
-      //   ax = pan.x_old + z_old * x_w → x_w = (ax - pan.x_old) / z_old
-      //   ax = pan.x_new + z_new * x_w → pan.x_new = ax - z_new * x_w
-      setPan((p) => {
-        if (next === 1) return { x: 0, y: 0 };
-        const xw = (anchorX - p.x) / z;
-        const yw = (anchorY - p.y) / z;
-        return { x: anchorX - next * xw, y: anchorY - next * yw };
-      });
-      return next;
-    });
+    const z = zoomRef.current;
+    const p = panRef.current;
+    const next = Math.max(1, Math.min(8, z * factor));
+    if (next === 1) {
+      zoomRef.current = 1; panRef.current = { x: 0, y: 0 };
+      setZoom(1); setPan({ x: 0, y: 0 });
+      return;
+    }
+    // ax = pan_old + z_old * xw → xw = (ax - pan_old) / z_old
+    // ax = pan_new + z_new * xw → pan_new = ax - z_new * xw
+    const xw = (anchorX - p.x) / z;
+    const yw = (anchorY - p.y) / z;
+    const newPan = { x: anchorX - next * xw, y: anchorY - next * yw };
+    zoomRef.current = next;
+    panRef.current = newPan;
+    setZoom(next);
+    setPan(newPan);
   }
 
   // Track container size so the map fills the panel.
