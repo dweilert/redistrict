@@ -57,17 +57,22 @@ function NationwideBatch() {
   const [mode, setMode] = useState<'nationwide' | 'single'>('nationwide');
   const [singleSeed, setSingleSeed] = useState<{ usps?: string; unit?: string; epsilon?: number; chainLength?: number }>({});
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
-  const [showDistricts, setShowDistricts] = useState(true);
+  // Default OFF: rendering 44 parallel district choropleths blocks the main
+  // thread for seconds and makes state clicks feel laggy. User can opt in.
+  const [showDistricts, setShowDistricts] = useState(false);
   const [selectedUsps, setSelectedUsps] = useState<string | null>(null);
   function handleStateClick(usps: string) {
-    // BYPASS REACT for the click feedback: imperatively inject an overlay
-    // <div> straight into <body> so the browser paints it on the next frame
-    // (~16ms) instead of waiting for React to reconcile + commit a tree
-    // re-render (which can take 2-3s with 50 states + their district
-    // choropleths). The modal that follows still goes through React.
+    // Diagnostic: log timing so we can see in the browser console exactly
+    // when the click handler ran vs when the overlay was injected. A long
+    // gap between "click event" and "overlay added" means something else
+    // (a setInterval / observer / SVG hit-test) was blocking the main
+    // thread before our handler got control.
+    const t0 = performance.now();
+    // eslint-disable-next-line no-console
+    console.log('[click]', usps, 'handler entered at', t0.toFixed(1), 'ms');
     showOpeningOverlay(usps);
-    // Defer the modal mount one tick so the browser flushes the overlay
-    // paint before React starts the heavy reconcile.
+    // eslint-disable-next-line no-console
+    console.log('[click]', usps, 'overlay injected after', (performance.now() - t0).toFixed(1), 'ms');
     window.setTimeout(() => setSelectedUsps(usps), 0);
   }
 

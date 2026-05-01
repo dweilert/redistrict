@@ -223,12 +223,14 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
                       ]}
                       stroke="#fff"
                       strokeWidth={0.6}
+                      pointerEvents="none"
                     />
                   ))}
-                  {/* Outline state border on top so neighbors are clearly delimited. */}
+                  {/* Outline state border on top so neighbors are clearly delimited.
+                      THIS path catches the click; others have pointer-events: none. */}
                   <path
                     d={stateOutlinePath}
-                    fill="none"
+                    fill="rgba(0,0,0,0.001)" /* invisible but hit-testable */
                     stroke={highlightUsps === usps ? '#2563eb' : '#1e293b'}
                     strokeWidth={highlightUsps === usps ? 3 : 0.7}
                   />
