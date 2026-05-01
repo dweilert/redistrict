@@ -7,7 +7,7 @@
  * - Pure React + d3-geo. No flicker, no full-page reruns. State updates only repaint
  *   the affected paths.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { geoAlbersUsa, geoPath } from 'd3-geo';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { api, type StateStatus } from './api';
@@ -40,7 +40,9 @@ interface Props {
   highlightUsps?: string | null;
 }
 
-export function USMap({ batchId, statuses, showDistricts, onStateClick, highlightUsps }: Props) {
+// Memoized below so a parent state change (e.g. opening overlay) doesn't trigger
+// a full re-render of all 50 states' SVG paths.
+function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUsps }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [{ width, height }, setSize] = useState({ width: 1100, height: 660 });
   // Zoom + pan state (transform on an inner <g>).
@@ -262,6 +264,8 @@ export function USMap({ batchId, statuses, showDistricts, onStateClick, highligh
     </div>
   );
 }
+
+export const USMap = memo(USMapImpl);
 
 export function PhaseLegend() {
   const phases: Array<[string, string]> = [

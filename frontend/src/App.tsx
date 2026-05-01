@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { flushSync } from 'react-dom';
 import {
   QueryClient,
   QueryClientProvider,
@@ -23,6 +22,29 @@ const qc = new QueryClient({
   },
 });
 
+/**
+ * Imperatively show a 'Opening <state>…' overlay by appending a DOM element
+ * directly to <body>. Bypasses React's reconciler so it paints on the next
+ * animation frame (~16ms) instead of waiting on a heavy tree re-render.
+ * Auto-removes after 800ms.
+ */
+function showOpeningOverlay(usps: string) {
+  // Remove any prior overlay so successive clicks don't stack.
+  document.querySelectorAll('.opening-overlay-imperative').forEach((el) =>
+    el.remove(),
+  );
+  const overlay = document.createElement('div');
+  overlay.className = 'opening-overlay opening-overlay-imperative';
+  overlay.innerHTML = `
+    <div class="opening-overlay-card">
+      <div class="opening-overlay-spinner"></div>
+      <div class="opening-overlay-text">Opening ${usps}…</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  window.setTimeout(() => overlay.remove(), 800);
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
@@ -37,16 +59,16 @@ function NationwideBatch() {
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [showDistricts, setShowDistricts] = useState(true);
   const [selectedUsps, setSelectedUsps] = useState<string | null>(null);
-  // Brief click-feedback overlay (auto-dismisses after 600ms so the modal can
-  // show through). Set the moment a state is clicked.
-  const [openingUsps, setOpeningUsps] = useState<string | null>(null);
   function handleStateClick(usps: string) {
-    // Force the overlay to paint BEFORE the heavy modal mount/data fetch
-    // batches in. flushSync commits this state synchronously so the user
-    // sees feedback within one frame of clicking.
-    flushSync(() => setOpeningUsps(usps));
-    setSelectedUsps(usps);
-    window.setTimeout(() => setOpeningUsps(null), 800);
+    // BYPASS REACT for the click feedback: imperatively inject an overlay
+    // <div> straight into <body> so the browser paints it on the next frame
+    // (~16ms) instead of waiting for React to reconcile + commit a tree
+    // re-render (which can take 2-3s with 50 states + their district
+    // choropleths). The modal that follows still goes through React.
+    showOpeningOverlay(usps);
+    // Defer the modal mount one tick so the browser flushes the overlay
+    // paint before React starts the heavy reconcile.
+    window.setTimeout(() => setSelectedUsps(usps), 0);
   }
 
   return (
@@ -99,18 +121,8 @@ function NationwideBatch() {
         </ErrorBoundary>
       </main>
 
-      {/* Full-screen 'Opening <state>…' flash; auto-dismisses after 600ms.
-          Lives at the top level so it's always above any modal that opens. */}
-      {openingUsps && (
-        <div className="opening-overlay">
-          <div className="opening-overlay-card">
-            <div className="opening-overlay-spinner" />
-            <div className="opening-overlay-text">
-              Opening {openingUsps}…
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Click-feedback overlay is injected directly into <body> by
+          showOpeningOverlay() so it paints before React reconciles. */}
     </div>
   );
 }
