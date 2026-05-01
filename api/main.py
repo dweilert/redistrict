@@ -415,6 +415,38 @@ def single_plan_districts(plan_id: str):
     return _gdf_to_geojson(diss)
 
 
+@app.get("/api/single-plan/{plan_id}/districts/{district}/cities")
+def single_plan_cities(plan_id: str, district: int):
+    """Cities/places inside one district of a single-plan run."""
+    from redistrict import places, loader
+    from redistrict.graph import _aggregate_to_blockgroups
+    import pandas as pd
+    if plan_id not in _SINGLE_PLANS:
+        raise HTTPException(404, f"Unknown plan: {plan_id}")
+    s = _SINGLE_PLANS[plan_id]
+    if s["phase"] != "done" or not s.get("result"):
+        raise HTTPException(409, f"Plan {plan_id} not done yet")
+    res = s["result"]
+    blocks = loader.load_blocks(res["usps"])
+    units_gdf = (_aggregate_to_blockgroups(blocks)
+                 if res["unit"] == "blockgroup" else blocks)
+    df = pd.DataFrame.from_dict(res["assignment"], orient="index",
+                                columns=["district"])
+    df.index.name = "GEOID"
+    df = df.reset_index()
+    df["GEOID"] = df["GEOID"].astype(str)
+    units_gdf = units_gdf.copy()
+    units_gdf["GEOID"] = units_gdf["GEOID"].astype(str)
+    merged = units_gdf.merge(df, on="GEOID", how="inner")
+    merged = merged[merged["district"].astype(int) == int(district)]
+    if len(merged) == 0:
+        raise HTTPException(404, f"No district {district} in plan {plan_id}")
+    poly = merged.dissolve().geometry.iloc[0]
+    statefp = config.STATES.get(res["usps"], {}).get("fips", "")
+    cities = places.cities_in_polygon(poly, statefp, res["usps"])
+    return {"plan_id": plan_id, "district": int(district), "cities": cities}
+
+
 @app.get("/api/single-plan/{plan_id}/pdf")
 def single_plan_pdf(plan_id: str):
     """Stream the PDF (with embedded provenance) for a completed plan."""

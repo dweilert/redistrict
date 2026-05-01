@@ -7,10 +7,12 @@
  * renders as a colored district choropleth with the same modal-style scorecard
  * as the nationwide view, plus a one-click PDF export.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { geoMercator, geoPath } from 'd3-geo';
 import { api } from './api';
+import { DistrictMap, DISTRICT_PALETTE } from './DistrictMap';
+import { CitiesPanel } from './CitiesPanel';
+import { SinglePlanHelp } from './SinglePlanHelp';
 
 const STATE_NAMES: Record<string, string> = {
   AL: 'Alabama', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
@@ -34,21 +36,21 @@ const STATE_SEATS: Record<string, number> = {
   VA: 11, WA: 10, WV: 2, WI: 8,
 };
 
-const DISTRICT_PALETTE = [
-  '#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F',
-  '#EDC948', '#B07AA1', '#FF9DA7', '#9C755F', '#BAB0AC',
-  '#1F77B4', '#D62728', '#2CA02C', '#9467BD', '#8C564B',
-  '#E377C2', '#17BECF', '#BCBD22', '#7F7F7F', '#AEC7E8',
-];
-
-const WEIGHT_KEYS: Array<{ key: string; label: string }> = [
-  { key: 'population_deviation', label: 'population_deviation' },
-  { key: 'polsby_popper', label: 'polsby_popper (compactness)' },
-  { key: 'county_splits', label: 'county_splits' },
-  { key: 'cut_edges', label: 'cut_edges' },
-  { key: 'total_area_sqmi', label: 'total_area_sqmi' },
-  { key: 'perimeter_total', label: 'perimeter_total' },
-  { key: 'reock', label: 'reock' },
+const WEIGHT_KEYS: Array<{ key: string; label: string; help: string }> = [
+  { key: 'population_deviation', label: 'population_deviation',
+    help: "Already capped by ε; this just decides whether to push for as-close-as-possible or settle for 'good enough within the legal envelope'." },
+  { key: 'polsby_popper', label: 'polsby_popper (compactness)',
+    help: 'Higher = rounder, tidier districts. 1.0 = perfect circle; 0.2–0.3 typical real district.' },
+  { key: 'county_splits', label: 'county_splits',
+    help: 'Higher = engine works harder to keep counties whole.' },
+  { key: 'cut_edges', label: 'cut_edges',
+    help: 'Smoother borders. Pick this OR polsby_popper, not both — they reward similar things.' },
+  { key: 'total_area_sqmi', label: 'total_area_sqmi',
+    help: 'Niche. Usually leave at 0.' },
+  { key: 'perimeter_total', label: 'perimeter_total',
+    help: 'Like cut_edges; pick one of the two.' },
+  { key: 'reock', label: 'reock',
+    help: 'Reserved — not yet computed.' },
 ];
 
 interface Props {
@@ -93,8 +95,8 @@ export function SinglePlanView(props: Props) {
   });
 
   return (
-    <div className="single-plan-grid">
-      <header style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div className="single-plan-wrapper">
+      <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>Generate single-state plan</h2>
         {props.onBack && (
           <button className="link-btn" onClick={props.onBack}>
@@ -102,11 +104,13 @@ export function SinglePlanView(props: Props) {
           </button>
         )}
       </header>
+      <SinglePlanHelp />
+      <div className="single-plan-grid">
 
       {/* LEFT: controls */}
       <section className="card">
         <h3>State</h3>
-        <label>
+        <label title="Only states with two or more U.S. House seats are listed; one-seat states have nothing to district.">
           State
           <select value={usps} onChange={(e) => setUsps(e.target.value)}>
             {Object.entries(STATE_NAMES)
@@ -121,14 +125,14 @@ export function SinglePlanView(props: Props) {
         </label>
 
         <h3>Engine</h3>
-        <label>
+        <label title="blockgroup ≈ thousands of nodes, fast, academic-standard for ReCom. block ≈ hundreds of thousands; minutes per chain.">
           Unit
           <select value={unit} onChange={(e) => setUnit(e.target.value)}>
             <option value="blockgroup">blockgroup (fast)</option>
             <option value="block">block (slow, high fidelity)</option>
           </select>
         </label>
-        <label>
+        <label title="How the engine starts. 'tree' is recommended — matches the ReCom proposal, mixes faster.">
           Initial partition
           <select value={seedStrategy} onChange={(e) => setSeedStrategy(e.target.value)}>
             <option value="tree">tree (recommended)</option>
@@ -137,17 +141,17 @@ export function SinglePlanView(props: Props) {
             <option value="sweep-ns">sweep-ns</option>
           </select>
         </label>
-        <label>
+        <label title="Hard cap on |district pop − target| / target. Federal congressional standard is ≤1%. Higher = exploratory only.">
           ε (%): <strong>{epsilonPct.toFixed(1)}</strong>
           <input type="range" min={0.1} max={5} step={0.1} value={epsilonPct}
                  onChange={(e) => setEpsilonPct(parseFloat(e.target.value))} />
         </label>
-        <label>
+        <label title="Number of ReCom moves to attempt. More = better optimization, longer wait. 200–500 plenty for small states; 1000–3000 for big ones.">
           Chain length: <strong>{chainLength}</strong>
           <input type="range" min={100} max={3000} step={50} value={chainLength}
                  onChange={(e) => setChainLength(parseInt(e.target.value))} />
         </label>
-        <label>
+        <label title="Same seed + same settings = identical map every time. Leave blank to randomize.">
           Random seed (blank = clock)
           <input type="number" value={randomSeed}
                  onChange={(e) => setRandomSeed(
@@ -157,8 +161,8 @@ export function SinglePlanView(props: Props) {
 
         <details className="knobs-group" open>
           <summary><strong>Variable weights</strong></summary>
-          {WEIGHT_KEYS.map(({ key, label }) => (
-            <label key={key}>
+          {WEIGHT_KEYS.map(({ key, label, help }) => (
+            <label key={key} title={help}>
               {label}: <strong>{weights[key].toFixed(1)}</strong>
               <input type="range" min={0} max={20} step={0.5} value={weights[key]}
                      onChange={(e) =>
@@ -194,6 +198,7 @@ export function SinglePlanView(props: Props) {
           <SinglePlanRunner planId={planId} usps={usps} chainLength={chainLength} />
         )}
       </section>
+      </div>
     </div>
   );
 }
@@ -273,6 +278,7 @@ function SinglePlanRunner({ planId, usps, chainLength }: { planId: string; usps:
       {isDone && districts.data && result.data && (
         <SinglePlanResultView
           planId={planId}
+          usps={usps}
           districts={districts.data}
           scorecard={result.data.scorecard}
           nDistricts={result.data.n_districts}
@@ -282,10 +288,9 @@ function SinglePlanRunner({ planId, usps, chainLength }: { planId: string; usps:
   );
 }
 
-function SinglePlanResultView({
-  planId, districts, scorecard, nDistricts,
-}: {
+interface ResultProps {
   planId: string;
+  usps: string;
   districts: GeoJSON.FeatureCollection;
   scorecard: {
     target_population: number;
@@ -305,11 +310,27 @@ function SinglePlanResultView({
     }>;
   };
   nDistricts: number;
-}) {
-  const W = 600;
-  const H = 420;
-  const projection = useMemo(() => geoMercator().fitSize([W, H], districts), [districts]);
-  const pathGen = useMemo(() => geoPath(projection), [projection]);
+}
+
+function SinglePlanResultView({ planId, usps, districts, scorecard, nDistricts }: ResultProps) {
+  const [showLabels, setShowLabels] = useState(true);
+  const [overlayOpacity, setOverlayOpacity] = useState(0);
+  const [selectedDistrict, setSelectedDistrict] = useState<number | null>(null);
+
+  const officialQuery = useQuery({
+    queryKey: ['cd119', usps],
+    queryFn: () => api.stateCD119(usps),
+    enabled: overlayOpacity > 0,
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false,
+  });
+  const officialScorecardQuery = useQuery({
+    queryKey: ['cd119-scorecard', usps],
+    queryFn: () => api.stateCD119Scorecard(usps),
+    enabled: overlayOpacity > 0,
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false,
+  });
 
   return (
     <>
@@ -321,23 +342,75 @@ function SinglePlanResultView({
         <span>Districts: <strong>{nDistricts}</strong></span>
       </div>
 
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="single-plan-svg">
-        {districts.features.map((f, i) => {
-          const did =
-            (f.properties as { district?: number } | null)?.district ?? i;
-          return (
-            <path
-              key={i}
-              d={pathGen(f) ?? ''}
-              fill={DISTRICT_PALETTE[did % DISTRICT_PALETTE.length]}
-              stroke="#fff"
-              strokeWidth={1}
-            />
-          );
-        })}
-      </svg>
+      <div className="single-plan-mapwrap">
+        <div className="state-map-toolbar">
+          <label className="checkbox">
+            <input type="checkbox" checked={showLabels}
+                   onChange={(e) => setShowLabels(e.target.checked)} />
+            Show district numbers
+          </label>
+        </div>
+        <div className="overlay-toggle">
+          <span title="Overlays the state's officially-adopted current U.S. House districts.">
+            Current US House districts
+          </span>
+          <input type="range" min={0} max={100} step={5} value={overlayOpacity}
+                 onChange={(e) => setOverlayOpacity(parseInt(e.target.value))} />
+          <span className="muted small" style={{ minWidth: 36 }}>{overlayOpacity}%</span>
+        </div>
+        <DistrictMap
+          fc={districts}
+          overlayFC={officialQuery.data}
+          overlayOpacity={overlayOpacity / 100}
+          showLabels={showLabels}
+          selectedDistrict={selectedDistrict}
+          onDistrictClick={setSelectedDistrict}
+          className="single-plan-svg"
+        />
+      </div>
 
-      <h4>Per-district detail</h4>
+      {selectedDistrict !== null && (
+        <CitiesPanel
+          district={selectedDistrict}
+          queryKey={['single-plan-cities', planId, String(selectedDistrict)]}
+          fetcher={() => api.singlePlanCities(planId, selectedDistrict)}
+          onClose={() => setSelectedDistrict(null)}
+        />
+      )}
+
+      {officialScorecardQuery.data?.available && (
+        <>
+          <h4>Generated vs. current (119th Congress)</h4>
+          <table className="modal-table compare-table">
+            <thead>
+              <tr>
+                <th>Metric</th>
+                <th>Generated</th>
+                <th>Current (119th)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Max |deviation|</td>
+                <td>{scorecard.max_abs_deviation_pct.toFixed(4)}%</td>
+                <td>{officialScorecardQuery.data.max_abs_deviation_pct?.toFixed(4)}%</td>
+              </tr>
+              <tr>
+                <td>Polsby–Popper mean</td>
+                <td>{scorecard.polsby_popper_mean.toFixed(3)}</td>
+                <td>{officialScorecardQuery.data.polsby_popper_mean?.toFixed(3)}</td>
+              </tr>
+              <tr>
+                <td>County splits</td>
+                <td>{scorecard.county_splits}</td>
+                <td>{officialScorecardQuery.data.county_splits}</td>
+              </tr>
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <h4>Per-district detail <span className="muted small">(click a row to see its cities)</span></h4>
       <table className="modal-table">
         <thead>
           <tr>
@@ -350,12 +423,11 @@ function SinglePlanResultView({
         </thead>
         <tbody>
           {scorecard.per_district.map((d) => (
-            <tr key={d.district}>
+            <tr key={d.district} className="row-clickable"
+                onClick={() => setSelectedDistrict(d.district)}>
               <td>
-                <span
-                  className="district-swatch"
-                  style={{ background: DISTRICT_PALETTE[d.district % DISTRICT_PALETTE.length] }}
-                />
+                <span className="district-swatch"
+                      style={{ background: DISTRICT_PALETTE[d.district % DISTRICT_PALETTE.length] }} />
                 <strong>{d.district + 1}</strong>
               </td>
               <td>{d.population.toLocaleString()}</td>

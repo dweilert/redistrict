@@ -202,6 +202,17 @@ export const api = {
         }>;
       };
     }>(`/api/single-plan/${id}/result`),
+  singlePlanCities: (id: string, district: number) =>
+    get<{
+      plan_id: string;
+      district: number;
+      cities: Array<{
+        name: string;
+        kind: string;
+        population: number;
+        area_sqmi: number;
+      }>;
+    }>(`/api/single-plan/${id}/districts/${district}/cities`),
   singlePlanDistricts: (id: string) =>
     get<GeoJSON.FeatureCollection>(`/api/single-plan/${id}/districts.geojson`),
   singlePlanPDFUrl: (id: string) => `/api/single-plan/${id}/pdf`,
