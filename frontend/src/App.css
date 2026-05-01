@@ -889,6 +889,24 @@ button.link-btn {
 .catalog-row-actions button.active { background: #2563eb; color: #fff; border-color: #1d4ed8; }
 .catalog-row-actions button.danger { color: #b91c1c; border-color: #fca5a5; }
 
+.left-card-tabs {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.left-card-tabs button {
+  padding: 6px 12px;
+  font-size: 13px;
+  border: none;
+  border-right: 1px solid #cbd5e1;
+  border-radius: 0;
+  background: #f8fafc;
+}
+.left-card-tabs button:last-child { border-right: none; }
+.left-card-tabs button.active { background: #2563eb; color: #fff; }
+
 .nationwide-source-tabs {
   display: inline-flex;
   gap: 0;

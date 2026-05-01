@@ -108,6 +108,8 @@ export function SinglePlanView(props: Props) {
     onSuccess: (r) => setPlanId(r.plan_id),
   });
 
+  const [leftTab, setLeftTab] = useState<'tune' | 'view'>('tune');
+
   return (
     <div className="single-plan-wrapper">
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
@@ -118,11 +120,53 @@ export function SinglePlanView(props: Props) {
           </button>
         )}
       </header>
-      <SinglePlanHelp />
       <div className="single-plan-grid">
 
-      {/* LEFT: controls */}
+      {/* LEFT: tabs + controls (or catalog/view) */}
       <section className="card">
+        <div className="left-card-tabs">
+          <button
+            className={leftTab === 'tune' ? 'active' : ''}
+            onClick={() => setLeftTab('tune')}
+            title="Engine controls + variable weights for generating a new plan."
+          >
+            📐 Tune
+          </button>
+          <button
+            className={leftTab === 'view' ? 'active' : ''}
+            onClick={() => setLeftTab('view')}
+            title="Catalog of saved plans for this state — view, set default, delete."
+          >
+            📋 View / Catalog
+          </button>
+        </div>
+
+      {leftTab === 'view' ? (
+        <>
+          <h3 style={{ marginTop: 12 }}>{STATE_NAMES[usps] ?? usps} <span className="muted">({usps})</span></h3>
+          <p className="muted small">
+            Pick a state at left, then click any catalog entry below to see how
+            its plan looks. Use the ⭐ to set a default that drives the
+            <em> Catalog defaults</em> nationwide view.
+          </p>
+          <label>
+            State
+            <select value={usps} onChange={(e) => setUsps(e.target.value)}>
+              {Object.entries(STATE_NAMES)
+                .sort((a, b) => a[1].localeCompare(b[1]))
+                .filter(([k]) => (STATE_SEATS[k] ?? 0) >= 2)
+                .map(([k, name]) => (
+                  <option key={k} value={k}>
+                    {name} ({k}) — {STATE_SEATS[k]} seats
+                  </option>
+                ))}
+            </select>
+          </label>
+          <CatalogPanel usps={usps} selectedPlanUuid={null} onSelect={() => {}} />
+        </>
+      ) : (
+        <>
+        <SinglePlanHelp />
         <h3>State</h3>
         <label title="Only states with two or more U.S. House seats are listed; one-seat states have nothing to district.">
           State
@@ -196,6 +240,8 @@ export function SinglePlanView(props: Props) {
         {launch.error && (
           <p className="err small">{(launch.error as Error).message}</p>
         )}
+        </>
+      )}
       </section>
 
       {/* RIGHT: state preview / live progress / result */}
