@@ -95,14 +95,19 @@ function USMapImpl({ batchId, statuses, showDistricts, onStateClick, highlightUs
     [statuses]
   );
 
+  // Only kick off the parallel district fetches when the user has actually
+  // asked to see them. Keeping 44 disabled-but-still-instantiated queries on
+  // the page was tying up the main thread (each is a query observer that
+  // wakes on cache events) and made every interaction feel laggy.
   const districtQueries = useQueries({
-    queries: doneStates.map((usps) => ({
-      queryKey: ['districts', batchId, usps],
-      queryFn: () => api.stateDistricts(batchId, usps),
-      enabled: showDistricts,
-      staleTime: 60 * 60 * 1000,
-      retry: false,
-    })),
+    queries: showDistricts
+      ? doneStates.map((usps) => ({
+          queryKey: ['districts', batchId, usps],
+          queryFn: () => api.stateDistricts(batchId, usps),
+          staleTime: 60 * 60 * 1000,
+          retry: false,
+        }))
+      : [],
   });
 
   const districtsByUsps = useMemo(() => {
